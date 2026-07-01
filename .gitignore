@@ -1,0 +1,11 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# 秘密情報（APIキーはコードに埋め込まない方針。万一のメモ等を弾く）
+*.secret
+.env
+.env.*
