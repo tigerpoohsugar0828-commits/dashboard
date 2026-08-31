@@ -348,8 +348,8 @@ tbody td{padding:8px 12px;vertical-align:middle;}
 .asb-item.is-active{background:rgba(255,255,255,.14);color:#fff;}
 .asb-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;}
 body{padding-left:184px;}
-#genre-analysis-overlay{left:184px!important;}
-@media(max-width:900px){#app-sidebar{position:static;width:auto;height:auto;flex-direction:row;padding:10px;overflow-x:auto;}body{padding-left:0;}#genre-analysis-overlay{left:0!important;}}
+#genre-analysis-overlay,#xa-overlay{left:184px!important;}
+@media(max-width:900px){#app-sidebar{position:static;width:auto;height:auto;flex-direction:row;padding:10px;overflow-x:auto;}body{padding-left:0;}#genre-analysis-overlay,#xa-overlay{left:0!important;}}
 </style>
 </head>
 <body>
@@ -363,6 +363,12 @@ body{padding-left:184px;}
   </button>
   <button class="asb-item" id="asb-source" onclick="_openGenreAnalysis('source');_setSidebarActive('source')">
     <span class="asb-dot" style="background:#a8792b;"></span>流入元分析
+  </button>
+  <button class="asb-item" id="asb-coaching" onclick="_openXA('coaching')">
+    <span class="asb-dot" style="background:#3f6aa8;"></span>コーチング分析
+  </button>
+  <button class="asb-item" id="asb-program" onclick="_openXA('program')">
+    <span class="asb-dot" style="background:#bb4b4b;"></span>プログラム分析
   </button>
 </nav>
 
@@ -760,6 +766,11 @@ body{padding-left:184px;}
         <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">進行中で目安より3日以上遅延している人がどのSTEPにいるか</div>
         <canvas id="npp-dropout-stuck-chart" height="300"></canvas>
       </div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-top:14px;">
+      <div style="font-size:14px;font-weight:700;color:#1d1f29;margin-bottom:2px;">完了日数の分布</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">STEP18完了者が、起点日から何日で完了したか（10日刻み）</div>
+      <div style="height:220px;"><canvas id="npp-duration-chart"></canvas></div>
     </div>
   </div>
 
@@ -2855,7 +2866,7 @@ function _renderKPIPhaseBanner(gradYM){
       // 分母＝STEP1完了日の月が対象月の人（表と統一）／起点＝STEP1完了日
       const _base=nppAllRows.filter(r=>r._step1Ym===_nm);
       const _daysS1=(r)=>(r._step18raw&&r._step1d)?db(r._step1d,r._step18raw):null;
-      nppBaseN=_base.length; nppOkN=_base.filter(r=>r._step18raw).length;
+      nppBaseN=_base.length; nppOkN=_base.filter(r=>{const dd=_daysS1(r);return dd!=null&&dd>=0&&dd<=(phase.kdiNppDays||60);}).length;
       nppPctV=nppBaseN>0?+(nppOkN/nppBaseN*100).toFixed(1):null;
       // フェーズ1：初投稿(STEP18)完了率を kdiNppDays日以内 のKPIで算出（STEP1完了日起点）。投稿プログラム②も合算。
       if(phase.id==='phase1'||phase.id==='prep'){
@@ -3311,8 +3322,8 @@ function _renderKPIPhaseBanner(gradYM){
         const _fpN=_csRows.filter(r=>!!(_cutP(r._firstPost)||_isMankuP(r))).length;
         const _mkN=_csRows.filter(_isMankuP).length;
         const _fpPct=_fpN?+(_mkN/_fpN*100).toFixed(1):null;
-        // 目標は全フェーズ共通で50%
-        const _fpTarget=50;
+        // 目標は全フェーズ共通で33.4%
+        const _fpTarget=33.4;
         postBasedCard=_navyMetric({label:'初投稿完了者の万垢達成率',refTag:'初投稿完了を分母',hasV:_fpPct!==null,pct:_fpPct,count:_mkN,denom:_fpN,targetPct:_fpTarget});
       }
     }
@@ -4200,7 +4211,42 @@ function _renderCombinedNPPSection(gradYM){
   }
 }
 
-let _nppDropoutStepChart=null,_nppDropoutStagnantChart=null,_nppDropoutStuckChart=null,_nppDropoutCourseChart=null;
+let _nppDropoutStepChart=null,_nppDropoutStagnantChart=null,_nppDropoutStuckChart=null,_nppDropoutCourseChart=null,_nppDurationChart=null;
+// 完了日数の分布（10日刻み）を描画
+function _renderNppDurationChart(rows){
+  const cv=document.getElementById('npp-duration-chart');
+  if(!cv)return;
+  if(_nppDurationChart){try{_nppDurationChart.destroy();}catch(e){}_nppDurationChart=null;}
+  const _db=(a,b)=>(a&&b)?Math.round((b-a)/86400000):null;
+  const durs=rows.map(r=>{
+    const st=r._step1d||r._start;
+    const en=r._step18raw||r._step18d;
+    const d=_db(st,en);
+    return (d!=null&&d>=0)?d:null;
+  }).filter(v=>v!=null);
+  if(!durs.length){cv.parentElement.style.display='none';return;}
+  cv.parentElement.style.display='';
+  const BIN=10, MAXB=8; // 〜10 / 10〜20 … 70〜80 / 80日+
+  const bins=new Array(MAXB+1).fill(0);
+  durs.forEach(d=>{const i=Math.min(Math.floor(d/BIN),MAXB);bins[i]++;});
+  const labels=bins.map((_,i)=>i===0?'〜10日':(i===MAXB?`${MAXB*BIN}日+`:`${i*BIN}〜${i*BIN+BIN}日`));
+  const total=durs.length;
+  const med=(()=>{const s=[...durs].sort((a,b)=>a-b);return s.length%2?s[(s.length-1)/2]:Math.round((s[s.length/2-1]+s[s.length/2])/2);})();
+  const avg=Math.round(durs.reduce((a,b)=>a+b,0)/total);
+  const colors=bins.map((_,i)=>{const lo=i*BIN;return lo<30?'#3f8f6b':lo<60?'#3f6aa8':lo<90?'#a8792b':'#bb4b4b';});
+  _nppDurationChart=new Chart(cv.getContext('2d'),{
+    type:'bar',
+    data:{labels,datasets:[{label:'人数',data:bins,backgroundColor:colors,borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{
+      legend:{display:false},
+      title:{display:true,text:`n=${total}名／中央値 ${med}日・平均 ${avg}日`,font:{size:12,weight:'600'},color:'#6c707b',padding:{bottom:10}},
+      tooltip:{callbacks:{label:c=>`${c.parsed.y}名（${(c.parsed.y/total*100).toFixed(1)}%）`}}
+    },scales:{
+      x:{grid:{display:false},ticks:{font:{size:11},maxRotation:0,minRotation:0,autoSkip:false}},
+      y:{beginAtZero:true,grace:'12%',ticks:{precision:0,font:{size:11},maxTicksLimit:6},grid:{color:'#f1f5f9'},title:{display:true,text:'人数',font:{size:10},color:'#94a3b8'}}
+    }}
+  });
+}
 function _applyNppDropoutCourse(){
   if(window._nppDropoutAllRows&&window._nppDropoutAllRows.length)_renderNppDropoutCharts(window._nppDropoutAllRows);
 }
@@ -4222,6 +4268,7 @@ function _renderNppDropoutCharts(cohortRows){
   const steps=NPP_STEP_DEFS.filter(d=>d.step<=18);
   // 分母 = STEP1完了者（=投稿プログラム開始済み）
   const dn=cohortRows.filter(r=>r._sd&&r._sd['STEP1完了日']);
+  _renderNppDurationChart(cohortRows);
   // ステップ別完了率
   const cv1=document.getElementById('npp-dropout-step-chart');
   if(cv1&&dn.length){
@@ -4601,6 +4648,279 @@ function _normalizeGenre(raw){
 }
 
 
+
+// ══════════════════════════════════════════
+//  コーチング分析 / プログラム分析
+// ══════════════════════════════════════════
+let _xaMode='coaching', _xaAxis='mg';
+const XA_AXES={
+  coaching:[{k:'mg',label:'担当MG別'},{k:'course',label:'コース別'}],
+  program:[{k:'program',label:'プログラム別'},{k:'step',label:'到達STEP別'},{k:'month',label:'卒業月別推移'},{k:'course',label:'コース別'}]
+};
+function _openXA(mode){
+  const ov=document.getElementById('xa-overlay');
+  if(!ov)return;
+  if(typeof csNumRows==='undefined'||!csNumRows.length){alert('CS数値管理シートの読込が必要です');return;}
+  const gov=document.getElementById('genre-analysis-overlay');
+  if(gov)gov.style.display='none';
+  if(mode!==_xaMode){_xaMode=mode;_xaAxis=XA_AXES[mode][0].k;}
+  _setSidebarActive(mode);
+  const msel=document.getElementById('xa-month');
+  if(msel&&msel.options.length<=1){
+    const months=[...new Set(csNumRows.map(r=>r._gradYm).filter(Boolean))].sort().reverse();
+    msel.innerHTML='<option value="">全卒業月</option>'+months.map(m=>`<option value="${m}">${_fmtGradMonth(m)}</option>`).join('');
+    if(typeof activeGradCohort!=='undefined'&&activeGradCohort)msel.value=activeGradCohort;
+  }
+  ov.style.display='flex';
+  document.body.style.overflow='hidden';
+  _xaRender();
+}
+function _xaSetAxis(k){_xaAxis=k;_xaRender();}
+
+// プログラム行（NPP / PP② / SP）を統合して名前キーで引けるマップを作る
+function _xaProgramRows(){
+  const out=[];
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  (typeof nppAllRows!=='undefined'?nppAllRows:[]).forEach(r=>out.push({...r,_prog:'新投稿プログラム',_key:_nk(r._name),_start2:r._step1d||r._start,_done:r._step18raw}));
+  (typeof post2026AllRows!=='undefined'?post2026AllRows:[]).forEach(r=>out.push({...r,_prog:'投稿プログラム②',_key:_nk(r._name),_start2:r._start,_done:r._step18d}));
+  (typeof allRows!=='undefined'?allRows:[]).forEach(r=>out.push({...r,_prog:'投稿プログラム①',_key:_nk(r._name),_start2:r._start||r._enrollDate,_done:null}));
+  return out;
+}
+function _xaLastStep(r){
+  let last=0;
+  if(r._sd)Object.keys(r._sd).forEach(k=>{const v=r._sd[k];if(!v)return;const m=k.match(/^STEP(\d+)(?:-\d+)?完了日$/);if(m)last=Math.max(last,parseInt(m[1],10));});
+  return last;
+}
+function _xaMed(a){if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return s.length%2?s[(s.length-1)/2]:Math.round((s[s.length/2-1]+s[s.length/2])/2);}
+function _xaPct(n,d){return d>0?+(n/d*100).toFixed(1):null;}
+function _xaDb(a,b){return (a&&b)?Math.round((b-a)/86400000):null;}
+
+function _xaRender(){
+  const main=document.getElementById('xa-main');
+  const tabs=document.getElementById('xa-axis-tabs');
+  const title=document.getElementById('xa-title');
+  const scope=document.getElementById('xa-scope');
+  if(!main)return;
+  title.textContent=_xaMode==='coaching'?'コーチング分析':'プログラム分析';
+  tabs.innerHTML=XA_AXES[_xaMode].map(a=>{
+    const on=_xaAxis===a.k;
+    return `<button onclick="_xaSetAxis('${a.k}')" style="border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;background:${on?'#fff':'transparent'};color:${on?'var(--primary)':'var(--muted)'};box-shadow:${on?'0 1px 3px rgba(0,0,0,.08)':'none'};">${a.label}</button>`;
+  }).join('');
+  const ym=(document.getElementById('xa-month')||{}).value||'';
+  const rows=csNumRows.filter(r=>!ym||r._gradYm===ym);
+  scope.textContent=`対象 ${rows.length}名${ym?'（'+_fmtGradMonth(ym)+'）':'（全卒業月合算）'}`;
+  if(!rows.length){main.innerHTML='<div style="color:var(--muted);font-size:13px;">データがありません</div>';return;}
+  main.innerHTML=_xaMode==='coaching'?_xaCoaching(rows,ym):_xaProgram(rows,ym);
+}
+
+// ── 達成判定（卒業月末カットオフ）──
+function _xaCut(r){
+  const [gy,gm]=String(r._gradYm||'').split('/').map(Number);
+  const now=new Date();
+  const me=(gy&&gm)?new Date(gy,gm,0,23,59,59):null;
+  const cut=(me&&me<now)?me:now;
+  return d=>(d&&d<=cut)?d:null;
+}
+function _xaManku(r){const c=_xaCut(r);return !!(c(r._f10000)||c(r._mankuForm));}
+function _xaReach(r,f){const c=_xaCut(r);return !!(c(f)||_xaManku(r));}
+
+function _xaTable(headers,bodyRows,minWidth){
+  const th='padding:9px 12px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+  return `<div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;">
+    <table style="width:100%;border-collapse:collapse;min-width:${minWidth||820}px;">
+      <thead><tr>${headers.map((h,i)=>`<th style="${th}text-align:${i?'right':'left'};">${h}</th>`).join('')}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  </div>`;
+}
+function _xaRow(cells,isTotal){
+  const fw=isTotal?'font-weight:800;':'font-weight:500;';
+  const bg=isTotal?'background:#f6f7f9;':'';
+  return `<tr style="${bg}border-bottom:1px solid #f1f5f9;">${cells.map((c,i)=>{
+    const v=(c&&typeof c==='object')?c:{v:c};
+    return `<td style="padding:10px 12px;font-size:13px;color:${v.color||'#1d1f29'};${fw}text-align:${i?'right':'left'};white-space:nowrap;font-feature-settings:'tnum' 1;">${v.v??'—'}</td>`;
+  }).join('')}</tr>`;
+}
+function _xaPctColor(p,good,mid){return p==null?'#cbd0d8':(p>=good?'#3f8f6b':p>=mid?'#a8792b':'#bb4b4b');}
+
+// ── コーチング分析 ──
+function _xaCoaching(rows,ym){
+  const prog=_xaProgramRows();
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  const progByName={};
+  prog.forEach(p=>{if(p._key&&!progByName[p._key])progByName[p._key]=p;});
+  const keyOf=r=>{
+    if(_xaAxis==='course')return (r._course||'').replace(/講座_/g,'').split(/[,、]/)[0].trim()||'（未設定）';
+    const p=progByName[_nk(r._name)];
+    return (p&&p._mg)||'（MGなし）';
+  };
+  const groups={};
+  rows.forEach(r=>{const k=keyOf(r);(groups[k]=groups[k]||[]).push(r);});
+  const build=(label,rs)=>{
+    const n=rs.length;
+    const mk=rs.filter(_xaManku).length;
+    const r5=rs.filter(r=>_xaReach(r,r._f5000)).length;
+    const r3=rs.filter(r=>_xaReach(r,r._f3000)).length;
+    const r1=rs.filter(r=>_xaReach(r,r._f1000)).length;
+    const fp=rs.filter(r=>_xaReach(r,r._firstPost)).length;
+    const posts=rs.map(r=>r._postCount).filter(v=>v!=null);
+    const avgP=posts.length?Math.round(posts.reduce((a,b)=>a+b,0)/posts.length):null;
+    const ps=rs.map(r=>progByName[_nk(r._name)]).filter(Boolean);
+    const done18=ps.filter(p=>p._done).length;
+    const stuck=ps.filter(p=>p._tsuz).length, stag=ps.filter(p=>p._stag).length;
+    return {label,n,mk,mkP:_xaPct(mk,n),r5:_xaPct(r5,n),r3:_xaPct(r3,n),r1:_xaPct(r1,n),fp:_xaPct(fp,n),avgP,d18:_xaPct(done18,ps.length),stuck,stag};
+  };
+  const list=Object.entries(groups).filter(([,rs])=>rs.length>=3).map(([k,rs])=>build(k,rs)).sort((a,b)=>(b.mkP||0)-(a.mkP||0));
+  const all=build('全体',rows);
+  const fmtP=(p,g,m)=>({v:p!=null?p+'%':'—',color:_xaPctColor(p,g,m)});
+  const body=[_xaRow([all.label,all.n+'名',all.mk+'名',fmtP(all.mkP,20,10),fmtP(all.r5,25,15),fmtP(all.r3,30,20),fmtP(all.r1,35,25),fmtP(all.fp,80,60),all.avgP!=null?all.avgP+'投稿':'—',fmtP(all.d18,40,25),all.stuck+'名',all.stag+'名'],true),
+    ...list.map(g=>_xaRow([g.label,g.n+'名',g.mk+'名',fmtP(g.mkP,20,10),fmtP(g.r5,25,15),fmtP(g.r3,30,20),fmtP(g.r1,35,25),fmtP(g.fp,80,60),g.avgP!=null?g.avgP+'投稿':'—',fmtP(g.d18,40,25),g.stuck+'名',g.stag+'名']))].join('');
+  const funnel=_xaFunnelBlock(rows,list.slice(0,6).map(g=>g.label),keyOf);
+  return `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">${_xaAxis==='course'?'コース':'担当MG'}ごとの成果指標（3名以上のグループのみ／万垢率の高い順）</div>
+    ${_xaTable([_xaAxis==='course'?'コース':'担当MG','対象','万垢','万垢率','5,000+','3,000+','1,000+','初投稿完了率','平均投稿数','STEP18完了率','つまずき','停滞'],body,1080)}
+    ${funnel}`;
+}
+
+// ファネル比較ブロック
+function _xaFunnelBlock(rows,labels,keyOf){
+  if(!labels.length)return '';
+  const stepsDef=[
+    {label:'プログラム開始',get:r=>_xaReach(r,r._start)},
+    {label:'アカウント作成',get:r=>_xaReach(r,r._account)},
+    {label:'初投稿完了',get:r=>_xaReach(r,r._firstPost)},
+    {label:'1,000到達',get:r=>_xaReach(r,r._f1000)},
+    {label:'3,000到達',get:r=>_xaReach(r,r._f3000)},
+    {label:'5,000到達',get:r=>_xaReach(r,r._f5000)},
+    {label:'万垢達成',get:r=>_xaManku(r)},
+  ];
+  const cards=labels.map(lb=>{
+    const rs=rows.filter(r=>keyOf(r)===lb);
+    if(!rs.length)return '';
+    const total=rs.length;
+    let prev=null;
+    const bars=stepsDef.map(s=>{
+      const n=rs.filter(s.get).length;
+      const pct=total?(n/total*100).toFixed(1):'0.0';
+      const tr=(prev!=null&&prev>0)?(n/prev*100).toFixed(0):null;
+      prev=n;
+      return `<div style="margin-bottom:7px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;"><span style="color:#3a3d47;font-weight:600;">${s.label}</span><span style="color:#6c707b;">${tr!=null?`<span style="font-weight:700;color:${tr>=80?'#3f8f6b':'#bb4b4b'};margin-right:5px;">${tr}%</span>`:''}${n}名（${pct}%）</span></div>
+        <div style="height:12px;background:#eef0f3;border-radius:4px;overflow:hidden;"><div style="height:100%;width:${Math.max(n/total*100,1.5)}%;background:#3f6aa8;border-radius:4px;"></div></div>
+      </div>`;
+    }).join('');
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
+      <div style="font-size:14px;font-weight:800;color:#1d1f29;margin-bottom:10px;">${lb}<span style="font-size:11px;font-weight:600;color:#94a3b8;margin-left:6px;">${rs.length}名</span></div>
+      ${bars}
+    </div>`;
+  }).join('');
+  return `<div style="font-size:14px;font-weight:800;color:#1d1f29;margin:22px 0 4px;">ファネル比較</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">上位6グループの各段階到達率（％は前段からの転換率）</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;">${cards}</div>`;
+}
+
+// ── プログラム分析 ──
+function _xaProgram(rows,ym){
+  const prog=_xaProgramRows();
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  const nameSet=new Set(rows.map(r=>_nk(r._name)));
+  const csByName={};
+  rows.forEach(r=>{const k=_nk(r._name);if(!csByName[k])csByName[k]=r;});
+  // 対象プログラム行（選択卒業月に属する人のみ）
+  let base=prog.filter(p=>p._prog!=='投稿プログラム①'&&nameSet.has(p._key));
+  if(!base.length)base=prog.filter(p=>nameSet.has(p._key));
+  const keyOf=p=>{
+    if(_xaAxis==='program')return p._prog;
+    if(_xaAxis==='step'){const s=_xaLastStep(p);return s===0?'未開始':(s>=18?'STEP18完了':'STEP'+s);}
+    if(_xaAxis==='course')return (p._course||'').replace(/講座_/g,'').split(/[,、]/)[0].trim()||'（未設定）';
+    const cs=csByName[p._key];return cs?_fmtGradMonth(cs._gradYm):'（不明）';
+  };
+  const groups={};
+  base.forEach(p=>{const k=keyOf(p);(groups[k]=groups[k]||[]).push(p);});
+  const build=(label,ps)=>{
+    const n=ps.length;
+    const done=ps.filter(p=>p._done).length;
+    const in60=ps.filter(p=>{const d=_xaDb(p._start2,p._done);return d!=null&&d>=0&&d<=60;}).length;
+    const durs=ps.map(p=>_xaDb(p._start2,p._done)).filter(v=>v!=null&&v>=0);
+    const stuck=ps.filter(p=>p._tsuz).length, stag=ps.filter(p=>p._stag).length;
+    const mkDone=ps.filter(p=>p._done&&csByName[p._key]&&_xaManku(csByName[p._key])).length;
+    return {label,n,done,doneP:_xaPct(done,n),in60,in60P:_xaPct(in60,n),med:_xaMed(durs),stuck,stag,mkP:_xaPct(mkDone,done),mkDone};
+  };
+  const order=(a,b)=>{
+    if(_xaAxis==='step'){const num=s=>s==='未開始'?-1:(s==='STEP18完了'?99:parseInt(s.replace('STEP',''))||0);return num(a.label)-num(b.label);}
+    if(_xaAxis==='month')return a.label<b.label?-1:1;
+    return (b.in60P||0)-(a.in60P||0);
+  };
+  const list=Object.entries(groups).filter(([,ps])=>ps.length>=3).map(([k,ps])=>build(k,ps)).sort(order);
+  const all=build('全体',base);
+  const fmtP=(p,g,m)=>({v:p!=null?p+'%':'—',color:_xaPctColor(p,g,m)});
+  const label0=_xaAxis==='program'?'プログラム':(_xaAxis==='step'?'到達STEP':(_xaAxis==='course'?'コース':'卒業月'));
+  const body=[_xaRow([all.label,all.n+'名',all.done+'名',fmtP(all.doneP,45,30),all.in60+'名',fmtP(all.in60P,40,25),all.med!=null?all.med+'日':'—',all.stuck+'名',all.stag+'名',fmtP(all.mkP,30,15)],true),
+    ...list.map(g=>_xaRow([g.label,g.n+'名',g.done+'名',fmtP(g.doneP,45,30),g.in60+'名',fmtP(g.in60P,40,25),g.med!=null?g.med+'日':'—',g.stuck+'名',g.stag+'名',fmtP(g.mkP,30,15)]))].join('');
+  return `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">${label0}ごとのプログラム進捗（3名以上のグループのみ）／完了=STEP18完了、万垢率=完了者のうち万垢達成した割合</div>
+    ${_xaTable([label0,'対象','完了','完了率','60日以内','60日以内率','完了日数中央値','つまずき','停滞','完了後の万垢率'],body,980)}
+    ${_xaDurationBlock(base,keyOf,list.slice(0,6).map(g=>g.label))}
+    ${_xaStepBlock(base,keyOf,list.slice(0,4).map(g=>g.label))}`;
+}
+
+// 完了日数の分布
+function _xaDurationBlock(base,keyOf,labels){
+  if(!labels.length)return '';
+  const BIN=10,MAXB=8;
+  const cards=labels.map(lb=>{
+    const ps=base.filter(p=>keyOf(p)===lb);
+    const durs=ps.map(p=>_xaDb(p._start2,p._done)).filter(v=>v!=null&&v>=0);
+    if(!durs.length)return '';
+    const bins=new Array(MAXB+1).fill(0);
+    durs.forEach(d=>{bins[Math.min(Math.floor(d/BIN),MAXB)]++;});
+    const max=Math.max(...bins,1);
+    const labs=bins.map((_,i)=>i===0?'〜10':(i===MAXB?'80+':`${i*BIN}〜${i*BIN+BIN}`));
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
+      <div style="font-size:13px;font-weight:800;color:#1d1f29;margin-bottom:2px;">${lb}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">n=${durs.length}／中央値 ${_xaMed(durs)}日</div>
+      <div style="display:flex;gap:4px;align-items:flex-end;height:104px;">${bins.map((v,i)=>{
+        const lo=i*BIN;const col=lo<30?'#3f8f6b':lo<60?'#3f6aa8':lo<80?'#a8792b':'#bb4b4b';
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;justify-content:flex-end;height:100%;">
+          <span style="font-size:10px;color:#6c707b;font-weight:700;">${v||''}</span>
+          <div style="width:100%;height:${v?Math.max(v/max*72,3):0}px;background:${col};border-radius:3px 3px 0 0;"></div>
+          <span style="font-size:9px;color:#94a3b8;">${labs[i]}</span>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+  if(!cards)return '';
+  return `<div style="font-size:14px;font-weight:800;color:#1d1f29;margin:22px 0 4px;">完了日数の分布</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">起点日からSTEP18完了までの日数（10日刻み・単位:日）</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;">${cards}</div>`;
+}
+
+// ステップ別完了率／つまずき・停滞ステップ
+function _xaStepBlock(base,keyOf,labels){
+  if(!labels.length)return '';
+  const cards=labels.map(lb=>{
+    const ps=base.filter(p=>keyOf(p)===lb);
+    if(!ps.length)return '';
+    const rowsHtml=Array.from({length:18},(_,i)=>i+1).map(s=>{
+      const done=ps.filter(p=>_xaLastStep(p)>=s).length;
+      const pct=ps.length?(done/ps.length*100):0;
+      const stuckN=ps.filter(p=>_xaLastStep(p)===s-1&&p._tsuz).length;
+      const stagN=ps.filter(p=>_xaLastStep(p)===s-1&&p._stag).length;
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="flex:0 0 54px;font-size:11px;color:#6c707b;">STEP${s}</span>
+        <span style="flex:1;height:11px;background:#eef0f3;border-radius:4px;overflow:hidden;"><span style="display:block;height:100%;width:${Math.max(pct,1)}%;background:${pct>=60?'#3f8f6b':pct>=35?'#3f6aa8':'#bb4b4b'};border-radius:4px;"></span></span>
+        <span style="flex:0 0 108px;text-align:right;font-size:11px;color:#6c707b;font-feature-settings:'tnum' 1;"><strong style="color:#1d1f29;">${pct.toFixed(1)}%</strong> ${done}名${(stuckN||stagN)?` <span style="color:#a8792b;">▲${stuckN}</span><span style="color:#bb4b4b;">/${stagN}</span>`:''}</span>
+      </div>`;
+    }).join('');
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
+      <div style="font-size:13px;font-weight:800;color:#1d1f29;margin-bottom:2px;">${lb}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">n=${ps.length}／▲つまずき・停滞（直前STEPで滞留）</div>
+      ${rowsHtml}
+    </div>`;
+  }).join('');
+  if(!cards)return '';
+  return `<div style="font-size:14px;font-weight:800;color:#1d1f29;margin:22px 0 4px;">ステップ別完了率・つまずき/停滞ステップ</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">各STEPまで到達した人の割合と、その手前で滞留している人数</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;">${cards}</div>`;
+}
 // ══════════════════════════════════════════
 //  ジャンル別分析（サイドバー付き全画面ビュー）
 // ══════════════════════════════════════════
@@ -4608,7 +4928,7 @@ let _gaGenre='';
 let _gaMode='genre';
 function _gaSetMode(m){_gaMode=m;_gaGenre='';_setSidebarActive(m);_gaRender();}
 function _setSidebarActive(k){
-  ['grad','genre','source'].forEach(id=>{
+  ['grad','genre','source','coaching','program'].forEach(id=>{
     const el=document.getElementById('asb-'+id);
     if(el)el.classList.toggle('is-active',id===k);
   });
@@ -4659,6 +4979,8 @@ function _openGenreAnalysis(mode){
 function _closeGenreAnalysis(){
   const ov=document.getElementById('genre-analysis-overlay');
   if(ov)ov.style.display='none';
+  const xa=document.getElementById('xa-overlay');
+  if(xa)xa.style.display='none';
   document.body.style.overflow='';
 }
 
@@ -11639,6 +11961,18 @@ function showNPPDetail(type){
   </div>
   <div id="course-filter-list"></div>
 </div>
+
+  <!-- コーチング分析 / プログラム分析パネル -->
+  <div id="xa-overlay" style="display:none;position:fixed;inset:0;background:var(--bg,#f4f5f7);z-index:9998;flex-direction:column;">
+    <div style="background:#fff;border-bottom:1px solid var(--border);padding:14px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:0 0 auto;">
+      <span id="xa-title" style="font-size:17px;font-weight:800;color:var(--text);"></span>
+      <div id="xa-axis-tabs" style="display:flex;gap:6px;background:#f1f5f9;border-radius:10px;padding:4px;"></div>
+      <select id="xa-month" onchange="_xaRender()" style="padding:7px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;color:var(--text);cursor:pointer;"><option value="">全卒業月</option></select>
+      <span id="xa-scope" style="font-size:12px;color:var(--muted);"></span>
+      <button onclick="_closeGenreAnalysis()" style="margin-left:auto;background:#eef0f3;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;color:#3a3d47;">閉じる</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:22px 26px;" id="xa-main"></div>
+  </div>
 
   <!-- ジャンル別分析パネル（全画面・サイドバー付き） -->
   <div id="genre-analysis-overlay" style="display:none;position:fixed;inset:0;background:var(--bg,#f4f5f7);z-index:9998;flex-direction:column;">
