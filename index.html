@@ -769,13 +769,16 @@ body{padding-left:184px;}
     </div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-top:14px;">
       <div style="font-size:14px;font-weight:700;color:#1d1f29;margin-bottom:2px;">完了日数の分布</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">STEP18完了者が、起点日から何日で完了したか（10日刻み）</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">プログラム完遂者（新投稿プログラム=STEP18／投稿プログラム②=STEP18-2）が、起点日から何日で完了したか（10日刻み）</div>
       <div style="height:220px;"><canvas id="npp-duration-chart"></canvas></div>
     </div>
   </div>
 
   <!-- 講師ごとの万垢率（卒業月コホート連動） -->
   <div id="teacher-manku-section" style="display:none;margin-top:16px;"></div>
+
+  <!-- 講師別 生徒進捗（フォロワー・投稿ベース／卒業月コホート連動） -->
+  <div id="teacher-progress-section" style="display:none;margin-top:16px;"></div>
 
   <!-- 週次 万垢達成者（卒業月コホート連動） -->
   <div id="weekly-manku-section" style="display:none;margin-top:16px;"></div>
@@ -2149,6 +2152,7 @@ function applyGradCohort(gradYM, silent=false){
     updateNewPPOverview();
   }
   _renderTeacherMankuSection(activeGradCohort);
+  _renderTeacherProgressSection(activeGradCohort);
   _renderWeeklyMankuSection(activeGradCohort);
   _renderMeiboCohortSection(activeGradCohort);
   // 投稿プログラム詳細分析パネルが開いていれば、選択中の卒業月で必ず再描画
@@ -2172,7 +2176,7 @@ function _renderTeacherMankuSection(gradYM){
     const rows=csNumRows.filter(r=>r._gradYm===ym);
     if(!rows.length)return null;
     const [gy,gm]=ym.split('/').map(Number);
-    const gradEnd=new Date(gy,gm,0); // 卒業月の末日
+    const gradEnd=new Date(gy,gm,1,23,59,59); // 締めは翌月1日
     const _achieved=r=>{
       if(r._mankuForm&&r._mankuForm<=gradEnd)return true;
       if(r._f10000&&r._f10000<=gradEnd)return true;
@@ -2186,12 +2190,17 @@ function _renderTeacherMankuSection(gradYM){
       const ok=_achieved(r);
       if(ok)byT[t].man++;
       const cl=(r._class||'').trim()||'（クラス未設定）';
-      if(!byT[t].cls[cl])byT[t].cls[cl]={n:0,man:0};
+      if(!byT[t].cls[cl])byT[t].cls[cl]={n:0,man:0,posts:[],zero:0};
       byT[t].cls[cl].n++;
       if(ok)byT[t].cls[cl].man++;
+      if(r._postCount!=null){byT[t].cls[cl].posts.push(r._postCount);if(r._postCount===0)byT[t].cls[cl].zero++;}
     });
     const list=Object.entries(byT).filter(([t])=>t!=='（未設定）').map(([t,v])=>({t,n:v.n,man:v.man,rate:v.n?v.man/v.n*100:0,
-      cls:Object.entries(v.cls).map(([c,cv])=>({c,n:cv.n,man:cv.man,rate:cv.n?cv.man/cv.n*100:0})).sort((a,b)=>a.c.localeCompare(b.c,'ja'))}))
+      cls:Object.entries(v.cls).map(([c,cv])=>{
+        const ps=[...cv.posts].sort((a,b)=>a-b);
+        const med=ps.length?(ps.length%2?ps[(ps.length-1)/2]:Math.round((ps[ps.length/2-1]+ps[ps.length/2])/2)):null;
+        return {c,n:cv.n,man:cv.man,rate:cv.n?cv.man/cv.n*100:0,postMed:med,zeroRate:cv.posts.length?cv.zero/cv.posts.length*100:null};
+      }).sort((a,b)=>a.c.localeCompare(b.c,'ja'))}))
       .sort((a,b)=>b.rate-a.rate);
     if(!list.length)return null;
     return`<div style="margin-bottom:16px;">
@@ -2204,6 +2213,8 @@ function _renderTeacherMankuSection(gradYM){
               <th style="padding:9px 14px;text-align:right;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">対象人数</th>
               <th style="padding:9px 14px;text-align:right;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">万垢達成</th>
               <th style="padding:9px 14px;text-align:right;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">万垢率</th>
+              <th style="padding:9px 14px;text-align:right;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">投稿数中央値</th>
+              <th style="padding:9px 14px;text-align:right;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">投稿ゼロ率</th>
             </tr></thead>
             <tbody>${list.map((r,i)=>{
               const bg=i%2===0?'#fff':'#f8fafc';
@@ -2216,6 +2227,8 @@ function _renderTeacherMankuSection(gradYM){
                   <td style="padding:9px 14px;text-align:right;">${cl.n}名</td>
                   <td style="padding:9px 14px;text-align:right;">${cl.man}名</td>
                   <td style="padding:9px 14px;text-align:right;font-weight:700;color:${cc};">${cl.rate.toFixed(1)}%</td>
+                  <td style="padding:9px 14px;text-align:right;font-weight:700;color:${cl.postMed==null?'#cbd0d8':(cl.postMed>=30?'#3f8f6b':cl.postMed>=10?'#a8792b':'#bb4b4b')};">${cl.postMed!=null?cl.postMed:'—'}</td>
+                  <td style="padding:9px 14px;text-align:right;font-weight:700;color:${cl.zeroRate==null?'#cbd0d8':(cl.zeroRate>=40?'#bb4b4b':cl.zeroRate>=20?'#a8792b':'#6c707b')};">${cl.zeroRate!=null?cl.zeroRate.toFixed(0)+'%':'—'}</td>
                 </tr>`;
               }).join('');
             }).join('')}</tbody>
@@ -2227,7 +2240,8 @@ function _renderTeacherMankuSection(gradYM){
   const blocks=[_buildBlock(gradYM),..._extraMonthsFor(gradYM).map(_buildBlock)].filter(Boolean);
   if(!blocks.length){sec.style.display='none';return;}
   sec.style.display='';
-  sec.innerHTML=`<div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px;">講師ごとの万垢率</div>${blocks.join('')}`;
+  sec.innerHTML=`<div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:3px;">講師ごとの万垢率</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">万垢率は母数が小さく偶然の影響が大きいため、投稿数中央値・投稿ゼロ率のほうが早期に問題を検知できます（中央値30以上=緑／10以上=橙／ゼロ率40%以上=赤）</div>${blocks.join('')}`;
 }
 
 
@@ -2345,6 +2359,179 @@ function _showWeeklyMankuModal(gradYM){
     <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">${_fd(thisWeek)} 週（月曜起点）／${week.length}名　累計 ${achievers.length}名</div>
     ${body}
   </div>`;
+}
+
+// ── 流入経路（広告／非広告）別の属性内訳モーダル ──
+function _showAdAttrModal(kind){
+  const pack=window._adSplitRows||{};
+  const rows=kind==='ad'?(pack.ad||[]):(pack.nonad||[]);
+  const title=kind==='ad'?'広告 経由':'非広告（紹介・オーガニック等）';
+  if(!rows.length)return;
+  const _attrOf=r=>studentInfoMap[(r._name||'').replace(/[\s　]/g,'')]||{};
+  const _course=r=>{const s=(r._course||'').replace(/講座_/g,'').replace(/コース/g,'').trim();if(!s)return '';const p=s.split(/[,、]/).map(x=>x.trim()).filter(Boolean);return p.length>1?'複数コース':p[0];};
+  const dims=[
+    {label:'年代',get:r=>_attrOf(r)._ageBand},
+    {label:'性別',get:r=>_attrOf(r)._gender},
+    {label:'職業',get:r=>_attrOf(r)._job},
+    {label:'希望ジャンル',get:r=>{
+      const key=(r._name||'').replace(/[\s　]/g,'');
+      // ①フォロワーシート ②CS数値管理シート ③行自身 の順にフォールバック
+      const fr=(typeof _postFollowerMap!=='undefined')?_postFollowerMap[r._name]:null;
+      let g=(fr&&fr._genre)||'';
+      if(!g&&typeof csNumRows!=='undefined'&&csNumRows.length){
+        const hit=csNumRows.find(x=>(x._name||'').replace(/[\s　]/g,'')===key&&x._genre);
+        if(hit)g=hit._genre;
+      }
+      if(!g)g=r._genre||'';
+      return g?_normalizeGenre(g):'';
+    }},
+    {label:'コース',get:r=>_course(r)},
+  ];
+  const _ord=(label,list)=>{
+    if(label==='年代'){const n=s=>{const m=String(s).match(/(\d+)/);return m?+m[1]:999;};return list.sort((a,b)=>n(a.k)-n(b.k));}
+    return list.sort((a,b)=>b.n-a.n);
+  };
+  const blocks=dims.map(d=>{
+    const m={};let known=0;
+    rows.forEach(r=>{const v=(d.get(r)||'').trim();if(!v||v==='（未設定）')return;m[v]=(m[v]||0)+1;known++;});
+    let list=Object.entries(m).map(([k,n])=>({k,n,pct:known?n/known*100:0}));
+    if(!list.length)return '';
+    list=_ord(d.label,list);
+    const max=Math.max(...list.map(x=>x.pct),1);
+    return `<div style="margin-bottom:18px;">
+      <div style="font-size:13px;font-weight:800;color:#1d1f29;margin-bottom:7px;">${d.label}<span style="font-size:11px;font-weight:600;color:#94a3b8;margin-left:6px;">有効 ${known}名 / ${rows.length}名</span></div>
+      ${list.map(x=>`<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px;">
+        <span style="flex:0 0 124px;font-size:12px;color:#3a3d47;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${x.k}</span>
+        <span style="flex:1;height:10px;background:#eef0f3;border-radius:5px;overflow:hidden;"><span style="display:block;height:100%;width:${Math.round(x.pct/max*100)}%;background:${kind==='ad'?'#bb4b4b':'#3f6aa8'};border-radius:5px;"></span></span>
+        <span style="flex:0 0 96px;text-align:right;font-size:12px;color:#6c707b;font-feature-settings:'tnum' 1;"><strong style="color:#1d1f29;font-size:13px;">${x.pct.toFixed(1)}%</strong> ${x.n}名</span>
+      </div>`).join('')}
+    </div>`;
+  }).filter(Boolean).join('');
+  let ov=document.getElementById('ad-attr-modal');
+  if(!ov){ov=document.createElement('div');ov.id='ad-attr-modal';document.body.appendChild(ov);}
+  ov.setAttribute('style','position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;');
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  ov.innerHTML=`<div style="background:#fff;border-radius:16px;max-width:760px;width:100%;max-height:86vh;overflow:auto;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;">
+      <div style="font-size:16px;font-weight:800;color:#1d1f29;">${title} の属性内訳<span style="font-size:13px;font-weight:600;color:var(--muted);margin-left:8px;">${rows.length}名</span></div>
+      <button onclick="document.getElementById('ad-attr-modal').remove()" style="background:#eef0f3;border:none;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;color:#3a3d47;">閉じる</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:18px;">生徒情報シートより／性別は氏名からの推定値。未設定は分母から除外</div>
+    ${blocks||'<div style="font-size:13px;color:var(--muted);padding:20px 0;">生徒情報シートの読込が必要です</div>'}
+  </div>`;
+}
+
+// ── 講師別 生徒進捗（フォロワー・投稿数をフェーズ目安と比較）──
+// フェーズ別の個人目安（累積）
+// fw は「順調」と判定する到達ライン（卒業は万垢＝別枠なので5,000を順調ラインとする）
+const _PROG_BENCH=[
+  {id:'prep',  label:'準備期間', posts:1, fw:100},
+  {id:'phase1',label:'フェーズ1',posts:8, fw:500},
+  {id:'phase2',label:'フェーズ2',posts:22,fw:1000},
+  {id:'phase3',label:'フェーズ3',posts:31,fw:3000},
+  {id:'phase4',label:'フェーズ4',posts:38,fw:5000},
+  {id:'grad',  label:'卒業',    posts:43,fw:5000},
+];
+function _benchFor(gradYM){
+  const p=_getPhaseForGradMonth(gradYM);
+  const hit=p?_PROG_BENCH.find(b=>b.id===p.id):null;
+  return hit||_PROG_BENCH.find(b=>b.id==='phase2');
+}
+function _renderTeacherProgressSection(gradYM){
+  const sec=document.getElementById('teacher-progress-section');
+  if(!sec)return;
+  if(typeof csNumRows==='undefined'||!csNumRows.length||!gradYM){sec.style.display='none';return;}
+  const rows=csNumRows.filter(r=>r._gradYm===gradYM);
+  if(!rows.length){sec.style.display='none';return;}
+  const bench=_benchFor(gradYM);
+  const now=new Date(), lim=(()=>{const[y,m]=gradYM.split('/').map(Number);return new Date(y,m,1,23,59,59);})();
+  const cut=d=>{if(!d)return null;const x=new Date(d);return(lim<now?(x<=lim?x:null):x);};
+  const isManku=r=>!!(cut(r._f10000)||cut(r._mankuForm));
+
+  // 進捗判定：投稿数・フォロワーを目安と比較
+  const _prog=(r)=>{
+    if(isManku(r))return{t:'万垢達成',c:'#c0762e',bg:'#f7ead9',rank:0};
+    const p=r._postCount||0, f=r._todayFollower||0;
+    if(!p)return{t:'未投稿',c:'#9aa0ab',bg:'#f1f5f9',rank:5};
+    const okP=p>=bench.posts, okF=f>=bench.fw;
+    if(okP&&okF)return{t:'順調',c:'#3f8f6b',bg:'#e9f3ee',rank:1};
+    if(okP&&!okF)return{t:'伸び悩み',c:'#a8792b',bg:'#f5efdc',rank:3};
+    if(!okP&&okF)return{t:'投稿不足',c:'#3f6aa8',bg:'#e9eef6',rank:2};
+    return{t:'遅れ',c:'#bb4b4b',bg:'#f6eaea',rank:4};
+  };
+
+  const byT={};
+  rows.forEach(r=>{
+    const t=(r._teacher||'').trim()||'（講師未設定）';
+    const cls=(r._class||'').trim();
+    const key=t+(cls&&cls!=='（クラス未設定）'?cls:'');
+    (byT[key]=byT[key]||[]).push(r);
+  });
+  const names=Object.keys(byT).sort((a,b)=>{
+    const au=/未設定/.test(a),bu=/未設定/.test(b);
+    if(au!==bu)return au?1:-1;
+    const ra=byT[a].filter(isManku).length/byT[a].length, rb=byT[b].filter(isManku).length/byT[b].length;
+    return rb-ra;
+  });
+  const _th='padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+  const _fmtN=v=>v==null?'—':Number(v).toLocaleString();
+
+  const blocks=names.map(nm=>{
+    const rs=byT[nm].slice().sort((a,b)=>_prog(a).rank-_prog(b).rank||(b._todayFollower||0)-(a._todayFollower||0));
+    const mk=rs.filter(isManku).length;
+    const good=rs.filter(r=>_prog(r).t==='順調').length;
+    const slow=rs.filter(r=>['遅れ','未投稿'].includes(_prog(r).t)).length;
+    const stall=rs.filter(r=>_prog(r).t==='伸び悩み').length;
+    const rate=rs.length?mk/rs.length*100:0;
+    const studentRows=rs.map(r=>{
+      const st=_prog(r);
+      const p=r._postCount, f=r._todayFollower;
+      const dP=p!=null?p-bench.posts:null, dF=f!=null?f-bench.fw:null;
+      const _delta=(v)=>v==null?'':`<span style="font-size:10px;color:${v>=0?'#3f8f6b':'#bb4b4b'};margin-left:4px;">${v>=0?'+':''}${Number(v).toLocaleString()}</span>`;
+      const ig=r._igUser?`<a href="https://www.instagram.com/${r._igUser}" target="_blank" rel="noopener" style="color:#e1306c;font-weight:600;text-decoration:none;">@${r._igUser}</a>`:'—';
+      return `<tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#1d1f29;white-space:nowrap;">${r._name||'—'}</td>
+        <td style="padding:8px 12px;"><span style="display:inline-block;font-size:11px;font-weight:700;color:${st.c};background:${st.bg};border-radius:5px;padding:3px 9px;white-space:nowrap;">${st.t}</span></td>
+        <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;color:#1d1f29;font-feature-settings:'tnum' 1;white-space:nowrap;">${p??'—'}${_delta(dP)}</td>
+        <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;color:#1d1f29;font-feature-settings:'tnum' 1;white-space:nowrap;">${_fmtN(f)}${_delta(dF)}</td>
+        <td style="padding:8px 12px;font-size:12px;color:#6c707b;white-space:nowrap;">${(r._course||'—').replace(/講座_/g,'')}</td>
+        <td style="padding:8px 12px;font-size:12px;color:#6c707b;white-space:nowrap;">${r._genre||'—'}</td>
+        <td style="padding:8px 12px;font-size:12px;white-space:nowrap;">${ig}</td>
+      </tr>`;
+    }).join('');
+    return `<details style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;">
+      <summary style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;cursor:pointer;list-style:none;background:#fafafb;user-select:none;">
+        <span style="display:flex;align-items:center;gap:10px;min-width:0;">
+          <span style="font-size:11px;color:#9aa0ab;">▶</span>
+          <span style="font-size:14px;font-weight:700;color:#1d1f29;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nm}</span>
+          <span style="font-size:12px;color:#94a3b8;font-weight:600;white-space:nowrap;">${rs.length}名</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:8px;flex-shrink:0;font-size:11px;font-weight:700;white-space:nowrap;">
+          ${mk?`<span style="color:#c0762e;background:#f7ead9;border-radius:5px;padding:3px 9px;">万垢 ${mk}（${rate.toFixed(0)}%）</span>`:''}
+          ${good?`<span style="color:#3f8f6b;background:#e9f3ee;border-radius:5px;padding:3px 9px;">順調 ${good}</span>`:''}
+          ${stall?`<span style="color:#a8792b;background:#f5efdc;border-radius:5px;padding:3px 9px;">伸び悩み ${stall}</span>`:''}
+          ${slow?`<span style="color:#bb4b4b;background:#f6eaea;border-radius:5px;padding:3px 9px;">遅れ ${slow}</span>`:''}
+        </span>
+      </summary>
+      <div style="overflow-x:auto;border-top:1px solid var(--border);"><table style="width:100%;border-collapse:collapse;min-width:760px;">
+        <thead><tr>
+          <th style="${_th}">表示名</th><th style="${_th}">進捗</th>
+          <th style="${_th}text-align:right;">投稿数</th><th style="${_th}text-align:right;">フォロワー</th>
+          <th style="${_th}">コース</th><th style="${_th}">ジャンル</th><th style="${_th}">Instagram</th>
+        </tr></thead><tbody>${studentRows}</tbody>
+      </table></div>
+    </details>`;
+  }).join('');
+
+  sec.style.display='';
+  sec.innerHTML=`
+    <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      講師別 生徒進捗
+      <span style="font-size:12px;font-weight:600;color:var(--muted);">${names.length}クラス・${rows.length}名</span>
+      <span style="margin-left:auto;background:#f8fafc;color:var(--muted);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-size:12px;">${bench.label}時点の目安：${bench.posts}投稿 / ${bench.fw.toLocaleString()}フォロワー${bench.id==='grad'?'（万垢は別枠）':''}</span>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">講師名をタップすると担当生徒の進捗が開きます（投稿数・フォロワーを${bench.label}時点の目安〈${bench.posts}投稿 / ${bench.fw.toLocaleString()}FW〉と比較。順調=両方達成／伸び悩み=投稿は達成でFW不足／投稿不足=FWは達成で投稿不足／遅れ=両方未達${bench.id==='grad'?'。卒業は万垢達成を別枠とし、5,000FWを順調ラインとしています':''}）</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;">${blocks}</div>`;
 }
 
 // ── 週次 万垢達成者（今週の達成者リスト＋特徴サマリー＋週次推移）──
@@ -2480,7 +2667,7 @@ function _renderMeiboCohortSection(gradYM){
   // CS数値管理シート：万垢フォーム回答日 or 10000フォロワー達成日 で判定（ファネル・クオーターと同じ月末カットオフ）
   const _nowM=new Date();
   const [_gyM,_gmM]=String(gradYM||'').split('/').map(Number);
-  const _monthEndM=(_gyM&&_gmM)?new Date(_gyM,_gmM,0,23,59,59):null;
+  const _monthEndM=(_gyM&&_gmM)?new Date(_gyM,_gmM,1,23,59,59):null;
   const _cutM=(_monthEndM&&_monthEndM<_nowM)?_monthEndM:_nowM;
   const rows=csNumRows.filter(r=>r._gradYm===gradYM&&((r._mankuForm&&r._mankuForm<=_cutM)||(r._f10000&&r._f10000<=_cutM)));
 
@@ -2672,7 +2859,7 @@ function _renderKPIPhaseBanner(gradYM){
       // ファネルと同じ判定に統一：到達日ベース（過去卒業月は月末カットオフ／万垢達成者は全ステップ達成扱い）
       const _nowK=new Date();
       const [_gyK,_gmK]=String(gradYM||'').split('/').map(Number);
-      const _monthEndK=(_gyK&&_gmK)?new Date(_gyK,_gmK,0,23,59,59):null;
+      const _monthEndK=(_gyK&&_gmK)?new Date(_gyK,_gmK,1,23,59,59):null;
       const _isPastK=_monthEndK&&_monthEndK<_nowK;
       const _cutK=d=>!d?d:(_isPastK?(d<=_monthEndK?d:null):d);
       const _isMankuK=r=>!!(_cutK(r._f10000)||_cutK(r._mankuForm));
@@ -2727,7 +2914,12 @@ function _renderKPIPhaseBanner(gradYM){
     const _csTarget=csNumRows.filter(r=>r._gradYm===gradYM);
     if(_csTarget.length){
       mansokuDenom=_csTarget.length;
-      actMansoku=_csTarget.filter(r=>r._f10000||r._mankuForm).length;
+      // 締めは翌月1日（ファネル・クオーターと統一）
+      const [_gyA,_gmA]=String(gradYM||'').split('/').map(Number);
+      const _endA=(_gyA&&_gmA)?new Date(_gyA,_gmA,1,23,59,59):null;
+      const _nowA=new Date();
+      const _cutA=(_endA&&_endA<_nowA)?_endA:_nowA;
+      actMansoku=_csTarget.filter(r=>(r._f10000&&r._f10000<=_cutA)||(r._mankuForm&&r._mankuForm<=_cutA)).length;
     }
   }
 
@@ -3115,6 +3307,65 @@ function _renderKPIPhaseBanner(gradYM){
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">${_icoBar}<span style="font-size:15px;font-weight:700;color:#1d1f29;">新プログラム ${_nmJP}分 コース別実績</span><span style="font-size:12px;color:#94a3b8;font-weight:600;">新投稿プログラム＋投稿プログラム② 合算</span></div>
               <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">分母: 起点日が${_nmJP}の人（NPP=STEP1完了日／PP②=プログラム開始日）／ 完了: STEP18完了 ／ 30日以内: 起点日から</div>
               ${tableHTML}
+              ${(()=>{
+                // 完遂までの日数（NPP=STEP18／PP②=STEP18-2。起点日から完了日まで）
+                const _d=(a,b)=>(a&&b)?Math.round((b-a)/86400000):null;
+                const _durOf=r=>{const v=_d(r._step1d,r._step18raw);return (v!=null&&v>=0)?v:null;};
+                const _stat=(rs)=>{
+                  const ds=rs.map(_durOf).filter(v=>v!=null);
+                  if(!ds.length)return null;
+                  const s=[...ds].sort((a,b)=>a-b);
+                  const q=p=>s[Math.min(s.length-1,Math.max(0,Math.round((s.length-1)*p)))];
+                  return{n:ds.length,med:s.length%2?s[(s.length-1)/2]:Math.round((s[s.length/2-1]+s[s.length/2])/2),
+                    avg:Math.round(ds.reduce((a,b)=>a+b,0)/ds.length),min:s[0],max:s[s.length-1],p25:q(.25),p75:q(.75)};
+                };
+                const all=_stat(baseRows);
+                if(!all)return '';
+                const courses=[...new Set(baseRows.map(r=>(r._course||'').trim()).filter(Boolean))].sort();
+                const _th='padding:9px 12px;text-align:right;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+                const _row=(label,st,isTotal)=>{
+                  if(!st)return '';
+                  const fw=isTotal?'font-weight:800;':'font-weight:600;';
+                  const td=`padding:9px 12px;text-align:right;font-size:13px;color:#1d1f29;${fw}font-feature-settings:'tnum' 1;white-space:nowrap;`;
+                  const mc=st.med<=30?'#3f8f6b':st.med<=60?'#3f6aa8':st.med<=90?'#a8792b':'#bb4b4b';
+                  return `<tr style="${isTotal?'background:#f6f7f9;':''}border-bottom:1px solid #f1f5f9;">
+                    <td style="padding:9px 12px;font-size:13px;color:#1d1f29;${fw}white-space:nowrap;">${label}</td>
+                    <td style="${td}">${st.n}名</td>
+                    <td style="${td}color:${mc};">${st.med}日</td>
+                    <td style="${td}">${st.avg}日</td>
+                    <td style="${td}">${st.p25}〜${st.p75}日</td>
+                    <td style="${td}">${st.min}日</td>
+                    <td style="${td}">${st.max}日</td>
+                  </tr>`;
+                };
+                // 10日刻みのヒストグラム（横軸: 〜10日 / 10〜20日 … 80日+）
+                const _ds=baseRows.map(_durOf).filter(v=>v!=null);
+                const BIN=10, MAXB=9;
+                const bins=new Array(MAXB+1).fill(0);
+                _ds.forEach(d=>{bins[Math.min(Math.floor(d/BIN),MAXB)]++;});
+                const _maxB=Math.max(...bins,1);
+                const _lbl=i=>i===0?'〜10':(i===MAXB?'90+':`${i*BIN}〜${i*BIN+BIN}`);
+                const _bc=i=>{const lo=i*BIN;return lo<30?'#3f8f6b':lo<60?'#3f6aa8':lo<90?'#a8792b':'#bb4b4b';};
+                const chartHTML=`<div style="margin:6px 0 22px;">
+                  <div style="display:flex;align-items:flex-end;gap:8px;height:190px;">
+                    ${bins.map((n,i)=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end;">
+                      <div style="font-size:12px;font-weight:800;color:${n?'#1d1f29':'#cbd0d8'};font-feature-settings:'tnum' 1;">${n}</div>
+                      <div style="width:100%;height:${Math.max(n/_maxB*130,n?4:1)}px;background:${n?_bc(i):'#eef0f3'};border-radius:5px 5px 0 0;"></div>
+                      <div style="font-size:10px;color:#94a3b8;white-space:nowrap;">${_lbl(i)}</div>
+                    </div>`).join('')}
+                  </div>
+                  <div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:4px;">完了までの日数（日）　緑=30日未満／青=30〜60日／黄=60〜90日／赤=90日以上</div>
+                </div>`;
+                return `<div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border);">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;"><span style="font-size:14px;font-weight:700;color:#1d1f29;">完遂までの日数</span><span style="font-size:12px;color:#94a3b8;font-weight:600;">新投稿プログラム＋投稿プログラム② 合算</span></div>
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">完遂者のみ（NPP=STEP18完了／PP②=STEP18-2完了）。n=${all.n}名／中央値 ${all.med}日・平均 ${all.avg}日</div>
+                  ${chartHTML}
+                  <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:680px;">
+                    <thead><tr><th style="${_th}text-align:left;">コース</th><th style="${_th}">完遂者</th><th style="${_th}">中央値</th><th style="${_th}">平均</th><th style="${_th}">中央50%の範囲</th><th style="${_th}">最短</th><th style="${_th}">最長</th></tr></thead>
+                    <tbody>${_row('全体',all,true)}${courses.map(c=>_row(c,_stat(baseRows.filter(r=>(r._course||'').trim()===c)),false)).join('')}</tbody>
+                  </table></div>
+                </div>`;
+              })()}
             </div>
             <div id="p26-top-anchor"></div>
             <div id="npp-detail-anchor"></div>
@@ -3315,15 +3566,15 @@ function _renderKPIPhaseBanner(gradYM){
         // ファネルと同じ判定に統一（過去卒業月は月末カットオフ／万垢達成者は全ステップ達成扱い）
         const _nowP=new Date();
         const [_gyP,_gmP]=String(gradYM||'').split('/').map(Number);
-        const _monthEndP=(_gyP&&_gmP)?new Date(_gyP,_gmP,0,23,59,59):null;
+        const _monthEndP=(_gyP&&_gmP)?new Date(_gyP,_gmP,1,23,59,59):null;
         const _isPastP=_monthEndP&&_monthEndP<_nowP;
         const _cutP=d=>!d?d:(_isPastP?(d<=_monthEndP?d:null):d);
         const _isMankuP=r=>!!(_cutP(r._f10000)||_cutP(r._mankuForm));
         const _fpN=_csRows.filter(r=>!!(_cutP(r._firstPost)||_isMankuP(r))).length;
         const _mkN=_csRows.filter(_isMankuP).length;
         const _fpPct=_fpN?+(_mkN/_fpN*100).toFixed(1):null;
-        // 目標は全フェーズ共通で33.4%
-        const _fpTarget=33.4;
+        // 目標は全フェーズ共通で30%
+        const _fpTarget=30;
         postBasedCard=_navyMetric({label:'初投稿完了者の万垢達成率',refTag:'初投稿完了を分母',hasV:_fpPct!==null,pct:_fpPct,count:_mkN,denom:_fpN,targetPct:_fpTarget});
       }
     }
@@ -3332,11 +3583,13 @@ function _renderKPIPhaseBanner(gradYM){
       heroCard=_heroBig({label:phase.id==='grad'?'KGI 万垢率':'KPI① 万垢率',pill:`目標 ${mansokuTarget}%`,hasV:actMansokuPct!==null,pct:actMansokuPct,count:actMansoku,denom:mansokuDenom,targetPct:mansokuTarget,goal20:['phase2','phase3','phase4'].includes(phase.id)?_finalKgi:null,click:`_showWeeklyMankuModal('${gradYM}')`});
       if(phase.kdiPosts!=null){
         const isRef=phase.kdiKind==='ref';
-        // 投稿完了率は達成=赤・未達=青で表示（卒業含むフェーズ2〜4）。判定基準は20%。
-        secondaryCard=_coloredMetric({label:`${phase.kdiPosts}投稿${isRef?'以上率':'完了率'}`,refTag:isRef?'（KDI参考）':'',hasV:actKdiPct!==null,pct:actKdiPct,count:actKdiEff,denom:kdiDenom,targetPct:20});
+        // 投稿完了率は達成=赤・未達=青で表示（卒業含むフェーズ2〜4）。判定基準は8月卒業まで20%／9月卒業以降24%。
+        const _kdiTgt=(gradYM>='2026/09')?24:20;
+        secondaryCard=_coloredMetric({label:`${phase.kdiPosts}投稿${isRef?'以上率':'完了率'}`,refTag:isRef?'（KDI参考）':'',hasV:actKdiPct!==null,pct:actKdiPct,count:actKdiEff,denom:kdiDenom,targetPct:_kdiTgt});
       }
     } else if(phase.kdiKind==='kdi'&&phase.kdiPosts!=null){
-      heroCard=_heroBig({label:`KDI ${phase.kdiPosts}投稿達成率`,pill:'目標 20%',hasV:actKdiPct!==null,pct:actKdiPct,count:actKdiEff,denom:kdiDenom,targetPct:20});
+      const _kdiTgt2=(gradYM>='2026/09')?24:20;
+      heroCard=_heroBig({label:`KDI ${phase.kdiPosts}投稿達成率`,pill:`目標 ${_kdiTgt2}%`,hasV:actKdiPct!==null,pct:actKdiPct,count:actKdiEff,denom:kdiDenom,targetPct:_kdiTgt2});
       compact=true;
     } else if(phase.kdiKind==='npp'){
       if(phase.id==='phase1'||phase.id==='prep'){
@@ -3462,8 +3715,11 @@ function _renderKPIPhaseBanner(gradYM){
       // 「選んだ人数」の母数もフォロワーシートのみで算出（万垢達成者名簿は参照しない）
       const _meiboCohort=[];
       // ── 「その他」記載・空欄を「外れ値」グループに統合（ジャンル分析の対象外として別枠表記）──
-      const _OUT='外れ値（「その他」記載・空欄）';
-      ['その他','（未設定）'].forEach(k=>{
+      const _OUT='外れ値（「その他」記載）';
+      // 空欄（未設定）はジャンル分析の対象外として完全に除外（分母にも含めない）
+      delete _gm['（未設定）'];
+      // 「その他」記載のみを外れ値グループへ統合（別枠表記）
+      ['その他'].forEach(k=>{
         if(_gm[k]){
           if(!_gm[_OUT])_gm[_OUT]={n:0,man:0,names:new Set(),posts:[]};
           _gm[k].names.forEach(nm=>_gm[_OUT].names.add(nm));
@@ -3534,12 +3790,12 @@ function _renderKPIPhaseBanner(gradYM){
         // 「その他」生ジャンル名の注記
         const _otherList=Object.entries(_otherRaw).sort((a,b)=>b[1]-a[1]);
         const otherNote=_otherList.length?`<div style="margin-top:14px;background:#f6f7f9;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:12px;font-weight:700;color:#6c707b;margin-bottom:6px;">「外れ値」に含まれる入力ジャンル（${_otherList.length}種・14カテゴリ外。ほかに「その他」記載・空欄を含む）</div>
+            <div style="font-size:12px;font-weight:700;color:#6c707b;margin-bottom:6px;">「外れ値」に含まれる入力ジャンル（${_otherList.length}種・カテゴリ外。ほかに「その他」記載を含む）</div>
             <div style="display:flex;flex-wrap:wrap;gap:6px;">${_otherList.map(([g,c])=>`<span style="display:inline-block;font-size:11px;font-weight:600;color:#6c707b;background:#fff;border:1px solid #e7e8ec;border-radius:6px;padding:3px 9px;">${g}<span style="color:#aab0bb;margin-left:4px;">${c}</span></span>`).join('')}</div>
           </div>`:'';
         genreSection=`<div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:3px;flex-wrap:wrap;"><div style="display:flex;align-items:center;gap:8px;">${_ICO_BAR}<span style="font-size:15px;font-weight:700;color:#1d1f29;">ジャンル別 集計</span></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span style="font-size:13px;font-weight:700;color:#4a47a3;background:#ecedf7;border-radius:7px;padding:5px 12px;">分母 ${validN}人</span>${outN?`<span style="font-size:12px;font-weight:600;color:#9aa0ab;background:#f1f5f9;border-radius:7px;padding:5px 11px;">外れ値 ${outN}人</span>`:''}</div></div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">1万フォロワー達成率の高い順。達成者がいる行はタップで一覧表示。<br>※「外れ値（「その他」記載・空欄）」はジャンル分析の対象外です（割合の参考にのみ表示）。</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:16px;">1万フォロワー達成率の高い順。達成者がいる行はタップで一覧表示。<br>※「外れ値（「その他」記載）」はジャンル分析の対象外です（割合の参考にのみ表示）。</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:18px;" id="genre-pie-wrap">
             <div>
               <div style="font-size:12px;font-weight:700;color:#6c707b;margin-bottom:10px;text-align:center;">在籍者のジャンル構成（占有率）</div>
@@ -3676,7 +3932,7 @@ function _renderKPIPhaseBanner(gradYM){
         const _qAchieved=r=>{
           const [gy,gm]=String(r._gradYm||'').split('/').map(Number);
           if(!gy||!gm)return false;
-          const monthEnd=new Date(gy,gm,0,23,59,59);
+          const monthEnd=new Date(gy,gm,1,23,59,59); // 翌月1日締め
           const cutoff=monthEnd<_now?monthEnd:_now;
           if(r._mankuForm&&r._mankuForm<=cutoff)return true;
           if(r._f10000&&r._f10000<=cutoff)return true;
@@ -4193,8 +4449,9 @@ function _renderCombinedNPPSection(gradYM){
       const ok=rows.filter(r=>r._step18raw).length;
       const pct=rows.length?+(ok/rows.length*100).toFixed(1):null;
       const _tgt=(typeof _curPhaseNppTarget!=='undefined'&&_curPhaseNppTarget)||50;
-      return _progRateCard(label,pct,_tgt,ok,rows.length,color);
+      return _progRateCard(label,pct,_tgt,ok,rows.length,color,`_showAdAttrModal('${label==='広告 経由'?'ad':'nonad'}')`);
     };
+    window._adSplitRows={ad:adRows,nonad:nonAdRows};
     _adSplitEl.innerHTML=`<div style="grid-column:1/-1;font-size:13px;font-weight:700;color:var(--muted);margin-bottom:-4px;">流入経路別 STEP18完了率<span style="font-weight:600;margin-left:6px;">新投稿プログラム＋投稿プログラム② 合算</span></div>`
       +_splitCard('広告 経由',adRows,'#bb4b4b')+_splitCard('非広告（紹介・オーガニック等）',nonAdRows,'#3f6aa8');
     _adSplitEl.style.display=(adRows.length||nonAdRows.length)?'grid':'none';
@@ -4268,7 +4525,17 @@ function _renderNppDropoutCharts(cohortRows){
   const steps=NPP_STEP_DEFS.filter(d=>d.step<=18);
   // 分母 = STEP1完了者（=投稿プログラム開始済み）
   const dn=cohortRows.filter(r=>r._sd&&r._sd['STEP1完了日']);
-  _renderNppDurationChart(cohortRows);
+  // 完了日数の分布：新投稿プログラム（STEP18）＋投稿プログラム②（STEP18-2）を合算
+  // 月キーは絞り込み前の配列から取る（コース絞り込みで0件になっても対象月を失わない）
+  const _durAll=(window._nppDropoutAllRows&&window._nppDropoutAllRows.length)?window._nppDropoutAllRows:cohortRows;
+  const _durMonth=(_durAll[0]&&_durAll[0]._step1Ym)||null;
+  const _durCourse=(_cf&&_cf.value)?_cf.value:'';
+  const _p26Dur=(typeof post2026AllRows!=='undefined'&&post2026AllRows.length&&_durMonth)
+    ? post2026AllRows.filter(r=>!r._isOutlier&&r._ym===_durMonth
+        &&(!_durCourse||(r._course||'').replace(/講座_/g,'').trim()===_durCourse))
+      .map(r=>({...r,_step1d:r._start,_step18raw:r._step18d}))
+    : [];
+  _renderNppDurationChart([...cohortRows,..._p26Dur]);
   // ステップ別完了率
   const cv1=document.getElementById('npp-dropout-step-chart');
   if(cv1&&dn.length){
@@ -4626,12 +4893,13 @@ function _normalizeGenre(raw){
   const s=(raw||'').trim();
   if(!s)return'（未設定）';
   const rules=[
+    ['ペット・動物系',['ペット','動物','犬','猫','いぬ','ねこ']],
     ['健康・医療系',['健康','医療','メンタル','看護','ヘルス']],
-    ['子育て系',['子育て','育児','ママ','パパ','妊娠','子供','こども']],
-    ['暮らし系',['暮らし','ライフスタイル','インテリア','家事','収納','掃除','家づくり','便利術','汚部屋']],
-    ['レシピ系',['レシピ','料理','献立','弁当','お菓子','パン','クッキング','冷凍ストック','冷凍']],
-    ['ダイエット・ボディメイク系',['ダイエット','ボディメイク','筋トレ','トレーニング','フィットネス','痩せ','ヨガ','体質改善']],
-    ['スキル・IT系',['スキル','IT','プログラ','エンジニア','テック','アプリ','ガジェット','AI']],
+    ['子育て系',['子育て','育児','ママ','パパ','妊娠','子供','こども','保育']],
+    ['暮らし系',['暮らし','ライフスタイル','インテリア','家事','収納','掃除','家づくり','便利術','汚部屋','農業','家庭菜園','園芸','ガーデ']],
+    ['レシピ系',['レシピ','料理','献立','弁当','お菓子','パン','クッキング','冷凍ストック','冷凍','食育','寿司','すし','グルメ飯']],
+    ['ダイエット・ボディメイク系',['ダイエット','ボディメイク','筋トレ','トレーニング','フィットネス','痩せ','ヨガ','体質改善','ストレッチ','スポーツ','ランニング','マラソン']],
+    ['スキル・IT系',['スキル','IT','プログラ','エンジニア','テック','アプリ','ガジェット','AI','office','エクセル','excel','パソコン','pc','自動車','車','バイク']],
     ['スポット・グルメ系',['スポット','グルメ','飲食','カフェ','レストラン','旅行','旅','観光','お出かけ']],
     ['ファッション系',['ファッション','アパレル','コーデ','服','着回し']],
     ['語学・学習系',['語学','英語','学習','勉強','教育','受験','資格']],
@@ -4639,7 +4907,7 @@ function _normalizeGenre(raw){
     ['お金・ビジネス系',['お金','ビジネス','投資','副業','マネー','節約','起業','金融','経済','資産運用','仕事術','転職']],
     ['美容系',['美容','コスメ','メイク','スキンケア','ネイル','ヘア','美肌','垢抜け']],
     ['マインド・自己啓発系',['マインド','自己啓発','メンタル','習慣','思考','心理']],
-    ['日常・Vlog系',['日常','vlog','ブログ','ルーティン','記録','ディズニー','ブイログ']],
+    ['日常・Vlog系',['日常','vlog','ブログ','ルーティン','記録','ディズニー','ブイログ','推し活','推し','アイドル','オタ']],
   ];
   for(const [cat,kws] of rules){
     for(const kw of kws){ if(s.toLowerCase().includes(kw.toLowerCase()))return cat; }
@@ -4654,7 +4922,7 @@ function _normalizeGenre(raw){
 // ══════════════════════════════════════════
 let _xaMode='coaching', _xaAxis='mg';
 const XA_AXES={
-  coaching:[{k:'mg',label:'担当MG別'},{k:'course',label:'コース別'}],
+  coaching:[{k:'mg',label:'担当MG別'},{k:'course',label:'コース別'},{k:'start',label:'スタート別'},{k:'kpi',label:'KPI進捗'}],
   program:[{k:'program',label:'プログラム別'},{k:'step',label:'到達STEP別'},{k:'month',label:'卒業月別推移'},{k:'course',label:'コース別'}]
 };
 function _openXA(mode){
@@ -4710,6 +4978,16 @@ function _xaRender(){
   const rows=csNumRows.filter(r=>!ym||r._gradYm===ym);
   scope.textContent=`対象 ${rows.length}名${ym?'（'+_fmtGradMonth(ym)+'）':'（全卒業月合算）'}`;
   if(!rows.length){main.innerHTML='<div style="color:var(--muted);font-size:13px;">データがありません</div>';return;}
+  if(_xaMode==='coaching'&&_xaAxis==='kpi'){
+    main.innerHTML=_xaCoachingKPI();
+    scope.textContent='特進・コミットコース／プログラム開始日を起点';
+    return;
+  }
+  if(_xaMode==='coaching'&&_xaAxis==='start'){
+    main.innerHTML=_xaCoachingStart();
+    scope.textContent='特進・コミットコース／プログラム開始日を起点（2026年1月開始生〜）';
+    return;
+  }
   main.innerHTML=_xaMode==='coaching'?_xaCoaching(rows,ym):_xaProgram(rows,ym);
 }
 
@@ -4717,34 +4995,368 @@ function _xaRender(){
 function _xaCut(r){
   const [gy,gm]=String(r._gradYm||'').split('/').map(Number);
   const now=new Date();
-  const me=(gy&&gm)?new Date(gy,gm,0,23,59,59):null;
+  const me=(gy&&gm)?new Date(gy,gm,1,23,59,59):null;
   const cut=(me&&me<now)?me:now;
   return d=>(d&&d<=cut)?d:null;
 }
 function _xaManku(r){const c=_xaCut(r);return !!(c(r._f10000)||c(r._mankuForm));}
 function _xaReach(r,f){const c=_xaCut(r);return !!(c(f)||_xaManku(r));}
 
+let _xaTableSeq=0;
 function _xaTable(headers,bodyRows,minWidth){
-  const th='padding:9px 12px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
-  return `<div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;">
-    <table style="width:100%;border-collapse:collapse;min-width:${minWidth||820}px;">
-      <thead><tr>${headers.map((h,i)=>`<th style="${th}text-align:${i?'right':'left'};">${h}</th>`).join('')}</tr></thead>
+  const th='padding:9px 12px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;cursor:pointer;user-select:none;background:#fff;';
+  const tid='xatbl-'+(++_xaTableSeq);
+  return `<div style="overflow-x:auto;overflow-y:auto;max-height:70vh;background:#fff;border:1px solid var(--border);border-radius:12px;">
+    <table id="${tid}" style="width:100%;border-collapse:separate;border-spacing:0;min-width:${minWidth||820}px;">
+      <thead><tr>${headers.map((h,i)=>`<th onclick="_xaSort('${tid}',${i})" title="クリックで並び替え" style="${th}text-align:${i?'right':'left'};position:sticky;top:0;z-index:${i===0?3:2};${i===0?'left:0;box-shadow:1px 0 0 #e7e8ec,0 2px 0 #e7e8ec;':'box-shadow:0 2px 0 #e7e8ec;'}">${h}<span data-xa-arrow style="color:#c2c7d0;margin-left:4px;font-size:9px;">⇅</span></th>`).join('')}</tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
   </div>`;
+}
+// 列ヘッダークリックで昇順/降順に並び替え（1行目の「全体」行は固定）
+function _xaSort(tid,col){
+  const tbl=document.getElementById(tid); if(!tbl)return;
+  const tb=tbl.tBodies[0]; if(!tb)return;
+  const rows=[...tb.rows];
+  if(rows.length<2)return;
+  // 「全体」などの集計行は先頭固定
+  const fixed=rows.filter(r=>/^(全体|合計)/.test((r.cells[0]?.textContent||'').trim()));
+  const data=rows.filter(r=>!fixed.includes(r));
+  const dir=(tbl.dataset.sortCol===String(col)&&tbl.dataset.sortDir==='desc')?'asc':'desc';
+  const num=s=>{
+    const t=String(s||'').replace(/[,\s名投稿日%＋+]/g,'').replace(/^—$/,'');
+    if(t==='')return null;
+    const m=t.match(/-?\d+(\.\d+)?/);
+    return m?parseFloat(m[0]):null;
+  };
+  const val=r=>{
+    const raw=(r.cells[col]?.textContent||'').trim();
+    const n=num(raw);
+    return n!=null?{n}:{s:raw};
+  };
+  data.sort((a,b)=>{
+    const x=val(a), y=val(b);
+    if(x.n!=null&&y.n!=null)return dir==='desc'?y.n-x.n:x.n-y.n;
+    if(x.n!=null)return -1;
+    if(y.n!=null)return 1;
+    return dir==='desc'?String(y.s).localeCompare(String(x.s),'ja'):String(x.s).localeCompare(String(y.s),'ja');
+  });
+  tb.innerHTML='';
+  [...fixed,...data].forEach(r=>tb.appendChild(r));
+  tbl.dataset.sortCol=String(col); tbl.dataset.sortDir=dir;
+  [...tbl.tHead.rows[0].cells].forEach((c,i)=>{
+    const a=c.querySelector('[data-xa-arrow]'); if(!a)return;
+    a.textContent=i===col?(dir==='desc'?'▼':'▲'):'⇅';
+    a.style.color=i===col?'#4a47a3':'#c2c7d0';
+  });
 }
 function _xaRow(cells,isTotal){
   const fw=isTotal?'font-weight:800;':'font-weight:500;';
   const bg=isTotal?'background:#f6f7f9;':'';
   return `<tr style="${bg}border-bottom:1px solid #f1f5f9;">${cells.map((c,i)=>{
     const v=(c&&typeof c==='object')?c:{v:c};
-    return `<td style="padding:10px 12px;font-size:13px;color:${v.color||'#1d1f29'};${fw}text-align:${i?'right':'left'};white-space:nowrap;font-feature-settings:'tnum' 1;">${v.v??'—'}</td>`;
+    const stick=i===0?`position:sticky;left:0;z-index:1;background:${isTotal?'#f6f7f9':'#fff'};box-shadow:1px 0 0 #e7e8ec;`:'';
+    return `<td style="padding:10px 12px;font-size:13px;color:${v.color||'#1d1f29'};${fw}text-align:${i?'right':'left'};white-space:nowrap;font-feature-settings:'tnum' 1;${stick}">${v.v??'—'}</td>`;
   }).join('')}</tr>`;
 }
 function _xaPctColor(p,good,mid){return p==null?'#cbd0d8':(p>=good?'#3f8f6b':p>=mid?'#a8792b':'#bb4b4b');}
 
+// ── コーチング分析：KPI進捗（プログラム開始日起点のマイルストーンKPI）──
+const XA_KPI_DEFS=[
+  {d:30,  items:[{k:'firstpost',label:'30日以内 初投稿作成完了率',target:10}]},
+  {d:60,  items:[{k:'done',label:'プログラム完了率',target:70}]},
+  {d:90,  items:[{k:'m5',label:'月5投稿達成率（投稿完了者ベース）',target:80},{k:'done',label:'プログラム完了率',target:80}]},
+  {d:120, items:[{k:'m10',label:'月10投稿達成率（投稿完了者ベース）',target:80},{k:'done',label:'プログラム完了率',target:85}]},
+  {d:150, items:[{k:'m10',label:'月10投稿達成率（投稿完了者ベース）',target:80},{k:'done',label:'プログラム完了率',target:90}]},
+  {d:180, items:[{k:'m10',label:'月10投稿達成率（投稿完了者ベース）',target:80},{k:'done',label:'プログラム完了率',target:95},{k:'p35',label:'KGI 最終35投稿達成率',target:80}]},
+];
+function _xaCoachingKPI(){
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  const CUT=new Date(2026,0,1);
+  const now=new Date();
+  // 投稿数シート：名前 → 投稿ごとの完了日配列
+  const postBy={};
+  (typeof postStandaloneRows!=='undefined'?postStandaloneRows:[]).forEach(r=>{
+    const k=_nk(r._name); if(!k)return;
+    const dates=[];
+    if(r._raw)Object.keys(r._raw).forEach(col=>{
+      const m=col.match(/^(\d+)投稿目完了日$/); if(!m)return;
+      const v=r._raw[col]; if(!v)return;
+      const d=new Date(String(v).replace(/[.年月]/g,'/').replace(/日/,''));
+      if(!isNaN(d))dates.push(d);
+    });
+    dates.sort((a,b)=>a-b);
+    if(!postBy[k]||dates.length>postBy[k].length)postBy[k]=dates;
+  });
+  const csBy={};
+  (typeof csNumRows!=='undefined'?csNumRows:[]).forEach(r=>{const k=_nk(r._name);if(k&&!csBy[k])csBy[k]=r;});
+  const stepDate=(r,n)=>{
+    if(!r._sd)return null;
+    let best=null;
+    Object.keys(r._sd).forEach(k=>{const v=r._sd[k];if(!v)return;const m=k.match(/^STEP(\d+)(?:-\d+)?完了日$/);
+      if(m&&parseInt(m[1],10)===n){const d=(v instanceof Date)?v:new Date(v);if(!isNaN(d)&&(!best||d>best))best=d;}});
+    return best;
+  };
+  // 対象：特進・コミット／2026年1月以降開始
+  const _toD=v=>{if(!v)return null;const d=(v instanceof Date)?v:new Date(String(v).replace(/[.年月]/g,'/').replace(/日/,''));return isNaN(d)?null:d;};
+  // 旧投稿プログラム（SP/AP/PP）の完了判定＝【PP】Step10完了日
+  const oldDone=r=>r._sd?_toD(r._sd['【PP】Step10完了日']):null;
+  const progs=[];
+  (typeof nppAllRows!=='undefined'?nppAllRows:[]).forEach(r=>progs.push({r,prog:'NPP',start:r._step1d||r._start,done:stepDate(r,18)}));
+  (typeof post2026AllRows!=='undefined'?post2026AllRows:[]).forEach(r=>progs.push({r,prog:'PP②',start:r._start,done:stepDate(r,18)}));
+  (typeof allRows!=='undefined'?allRows:[]).forEach(r=>{
+    if(r._isOutlier)return;
+    const st=_toD(r._raw&&r._raw['【SP】受講開始日'])||_toD(r._sd&&r._sd['【SP】Step1完了日']);
+    progs.push({r,prog:'旧PG',start:st,done:oldDone(r)});
+  });
+  // 同一人物が複数プログラムに存在する場合は、開始日が最も早いものを採用
+  const seen={};
+  const items=progs.map(p=>{
+    if(!p.start)return null;
+    const st=(p.start instanceof Date)?p.start:new Date(p.start);
+    if(isNaN(st)||st<CUT)return null;
+    const key=_nk(p.r._name);
+    const cs=csBy[key]||{};
+    const course=String(cs._course||p.r._course||'').replace(/講座_/g,'').trim();
+    if(!/特進|コミット/.test(course))return null;
+    if(seen[key]&&seen[key]<=st)return null;
+    seen[key]=st;
+    return {name:p.r._name,prog:p.prog,start:st,course,posts:postBy[key]||[],done18:p.done,
+      csFirstPost:(cs._firstPost instanceof Date)?cs._firstPost:(cs._firstPost?new Date(cs._firstPost):null),
+      csPostCount:cs._postCount!=null?cs._postCount:null,r:p.r};
+  }).filter(Boolean);
+  if(!items.length)return '<div style="color:var(--muted);font-size:13px;">対象データ（特進・コミット／2026年1月以降開始）がありません</div>';
+
+  // seen で最終的に残った開始日と一致する行だけを採用（重複除去の確定）
+  const dedup=items.filter(x=>seen[_nk(x.name)]&&seen[_nk(x.name)].getTime()===x.start.getTime());
+  const uniq={};
+  const finalItems=dedup.filter(x=>{const k=_nk(x.name);if(uniq[k])return false;uniq[k]=1;return true;});
+  items.length=0; finalItems.forEach(x=>items.push(x));
+  const hasPostDates=items.some(x=>x.posts.length>0);
+  // 開始月グループ
+  const byMonth={};
+  items.forEach(x=>{const k=`${x.start.getFullYear()}/${String(x.start.getMonth()+1).padStart(2,'0')}`;(byMonth[k]=byMonth[k]||[]).push(x);});
+  const months=Object.keys(byMonth).sort();
+
+  // 指標の計算（分母・分子を返す）
+  const calc=(list,d,kind)=>{
+    const at=x=>new Date(x.start.getTime()+d*86400000);
+    const mature=list.filter(x=>at(x)<=now); // その日数が到来している人のみ
+    if(!mature.length)return null;
+    if(kind==='firstpost'){
+      // 初投稿日の取得元：投稿数シート → CS数値管理（実測値のみ。代替指標は誤差が大きいため使わない）
+      const src=x=>x.posts.length?x.posts[0]:(x.csFirstPost||null);
+      const base=mature.filter(x=>src(x));
+      // データ源が無い行は「未達」ではなく対象外として分母から除外する
+      if(!base.length)return {na:true};
+      const ok=base.filter(x=>src(x)<=at(x)).length;
+      return {n:ok,dn:base.length,cov:base.length,covTotal:mature.length};
+    }
+    if(kind==='done'){
+      const ok=mature.filter(x=>x.done18&&x.done18<=at(x)).length;
+      return {n:ok,dn:mature.length};
+    }
+    if(kind==='p35'){
+      if(hasPostDates){
+        const ok=mature.filter(x=>x.posts.filter(p=>p<=at(x)).length>=35).length;
+        return {n:ok,dn:mature.length};
+      }
+      // 投稿日データ無し：現在の投稿数合計で代替（時点指定なし）
+      const base=mature.filter(x=>x.csPostCount!=null);
+      if(!base.length)return {na:true};
+      return {n:base.filter(x=>x.csPostCount>=35).length,dn:base.length,approx:true,cov:base.length,covTotal:mature.length};
+    }
+    // 月◯投稿：直前30日間の投稿本数。分母は初投稿済みの人（投稿日データ必須）
+    if(!hasPostDates)return {na:true};
+    const need=kind==='m5'?5:10;
+    const base=mature.filter(x=>x.posts.length&&x.posts[0]<=at(x));
+    if(!base.length)return {na:true};
+    const ok=base.filter(x=>{
+      const end=at(x), begin=new Date(end.getTime()-30*86400000);
+      return x.posts.filter(p=>p>begin&&p<=end).length>=need;
+    }).length;
+    return {n:ok,dn:base.length};
+  };
+
+  const th='padding:9px 11px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+  const _cellFor=(list,d,it)=>{
+    const c=calc(list,d,it.k);
+    if(c&&c.na)return '<span style="color:#b0863a;font-size:10px;font-weight:700;background:#fdf3e2;border-radius:5px;padding:3px 6px;white-space:nowrap;">投稿日データ未読込</span>';
+    if(!c||!c.dn)return '<span style="color:#cbd0d8;font-size:12px;">—</span>';
+    const pct=+(c.n/c.dn*100).toFixed(1);
+    const ok=pct>=it.target;
+    return `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+      <span style="font-size:14px;font-weight:800;color:${ok?'#1d6b4f':(pct>=it.target*0.8?'#a8792b':'#bb4b4b')};font-feature-settings:'tnum' 1;">${pct}%${c.approx?'<span style="font-size:9px;color:#b0863a;margin-left:2px;">現在値</span>':''}</span>
+      <span style="font-size:10px;color:#94a3b8;">${c.n}/${c.dn}　目標${it.target}%</span>
+      ${(c.covTotal&&c.cov<c.covTotal)?`<span style="font-size:9px;color:#b0863a;">データ有り ${c.cov}/${c.covTotal}名</span>`:''}
+    </div>`;
+  };
+
+  // 全体行＋月別行
+  const buildRows=(rowsDef)=>rowsDef.map(([label,list],i)=>{
+    const isTotal=i===0;
+    const cells=XA_KPI_DEFS.flatMap(g=>g.items.map(it=>`<td style="padding:9px 11px;text-align:right;white-space:nowrap;">${_cellFor(list,g.d,it)}</td>`)).join('');
+    return `<tr style="${isTotal?'background:#f6f7f9;':(i%2?'background:#f8fafc;':'')}border-bottom:1px solid #f1f5f9;">
+      <td style="padding:9px 11px;font-size:13px;font-weight:${isTotal?'800':'700'};color:#1d1f29;white-space:nowrap;">${label}</td>
+      <td style="padding:9px 11px;text-align:right;font-size:12px;color:#6c707b;font-feature-settings:'tnum' 1;">${list.length}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  const rowsDef=[['全体',items],...months.map(m=>{
+    const mm=m.match(/^(\d{4})\/(\d{2})$/);
+    return [mm?`${mm[1]}年${parseInt(mm[2])}月開始`:m, byMonth[m]];
+  })];
+
+  const head1=XA_KPI_DEFS.map(g=>`<th colspan="${g.items.length}" style="${th}text-align:center;border-left:1px solid #e7e8ec;">${g.d}日時点</th>`).join('');
+  const head2=XA_KPI_DEFS.flatMap(g=>g.items.map((it,i)=>`<th style="${th}text-align:right;${i===0?'border-left:1px solid #e7e8ec;':''}font-weight:600;">${it.label.replace(/（.*?）/,'')}</th>`)).join('');
+
+  return `<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#1d1f29;margin-bottom:5px;">コーチングKPI 進捗<span style="font-size:11px;font-weight:600;color:var(--muted);margin-left:6px;">特進・コミットコース／プログラム開始日起点／旧PG・投稿PG②・新投稿PG 合算</span></div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.75;">
+        各マイルストーンは「開始日から◯日が経過した人」のみを分母にしています（未到来の人は除外）。<br>
+        初投稿・投稿数の指標は元データが無い人を分母から除外し、「データ有り ◯/◯名」でカバレッジを併記します（日付が空欄の人を未達として数えません）。<br>
+        月◯投稿＝その時点の直前30日間の投稿本数／分母は初投稿済みの人。投稿日は投稿数シートの「◯投稿目完了日」から算出。<br>
+        ${hasPostDates?'':'<span style="color:#b0863a;font-weight:700;">現在、投稿数シートの「◯投稿目完了日」に値が入っていないため、月◯投稿達成率は算出できません。</span>初投稿完了率はCS数値管理シートの初投稿完了日、35投稿達成率は投稿数合計の現在値で代替表示しています。'}
+      </div>
+    </div>
+    <div style="overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;">
+      <table style="width:100%;border-collapse:collapse;min-width:1240px;">
+        <thead>
+          <tr><th rowspan="2" style="${th}text-align:left;vertical-align:bottom;">スタート</th><th rowspan="2" style="${th}text-align:right;vertical-align:bottom;">人数</th>${head1}</tr>
+          <tr>${head2}</tr>
+        </thead>
+        <tbody>${buildRows(rowsDef)}</tbody>
+      </table>
+    </div>`;
+}
+
+// ── コーチング分析：スタート別（プログラム開始日を起点に30日刻みで進捗を追う）──
+function _xaStartToggle(k){
+  const el=document.getElementById('xas-'+k);
+  const ic=document.getElementById('xasi-'+k);
+  if(!el)return;
+  const open=el.style.display!=='none';
+  el.style.display=open?'none':'';
+  if(ic)ic.textContent=open?'▸':'▾';
+}
+function _xaCoachingStart(){
+  const MS=[30,60,90,120,150,180];
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  // CS数値管理シートから 名前→コース/MG/投稿数/卒業月 を引く
+  const csBy={};
+  (typeof csNumRows!=='undefined'?csNumRows:[]).forEach(r=>{const k=_nk(r._name);if(k&&!csBy[k])csBy[k]=r;});
+  // プログラム行（NPP / PP②）から開始日・STEP完了日を取得
+  const progs=[];
+  (typeof nppAllRows!=='undefined'?nppAllRows:[]).forEach(r=>progs.push({r,prog:'新投稿プログラム',start:r._step1d||r._start}));
+  (typeof post2026AllRows!=='undefined'?post2026AllRows:[]).forEach(r=>progs.push({r,prog:'投稿プログラム②',start:r._start}));
+  const CUT=new Date(2026,0,1);
+  // STEP{n}（サブステップ含む）の完了日 → 最も遅い日付
+  const stepDate=(r,n)=>{
+    if(!r._sd)return null;
+    let best=null;
+    Object.keys(r._sd).forEach(k=>{
+      const v=r._sd[k]; if(!v)return;
+      const m=k.match(/^STEP(\d+)(?:-\d+)?完了日$/);
+      if(m&&parseInt(m[1],10)===n){const d=(v instanceof Date)?v:new Date(v);if(!isNaN(d)&&(!best||d>best))best=d;}
+    });
+    return best;
+  };
+  // 指定日時点で到達しているSTEP番号（0=未着手）
+  const stepAt=(r,limit)=>{
+    let last=0;
+    for(let n=1;n<=18;n++){const d=stepDate(r,n);if(d&&d<=limit)last=n;}
+    return last;
+  };
+  const items=progs.map(p=>{
+    if(!p.start)return null;
+    const st=(p.start instanceof Date)?p.start:new Date(p.start);
+    if(isNaN(st)||st<CUT)return null;
+    const key=_nk(p.r._name);
+    const cs=csBy[key]||{};
+    return {
+      name:p.r._name||'—', prog:p.prog, start:st,
+      course:String(cs._course||p.r._course||'').replace(/講座_/g,'').trim(),
+      mg:String(cs._teacher||p.r._mg||'').trim(),
+      posts:cs._postCount!=null?cs._postCount:(p.r._postCount!=null?p.r._postCount:null),
+      gradYm:cs._gradYm||'',
+      r:p.r
+    };
+  }).filter(Boolean).filter(x=>/特進|コミット/.test(x.course));
+  if(!items.length)return '<div style="color:var(--muted);font-size:13px;">対象データ（特進コース・コミットコース／2026年1月以降開始）がありません</div>';
+  // 開始月でグループ化
+  const byMonth={};
+  items.forEach(x=>{
+    const k=`${x.start.getFullYear()}/${String(x.start.getMonth()+1).padStart(2,'0')}`;
+    (byMonth[k]=byMonth[k]||[]).push(x);
+  });
+  const months=Object.keys(byMonth).sort();
+  const now=new Date();
+  const th='padding:8px 10px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+  const _cell=(x,d)=>{
+    const limit=new Date(x.start.getTime()+d*86400000);
+    if(limit>now)return {t:'—',c:'#cbd0d8',bg:'transparent'};
+    const s18=stepDate(x.r,18);
+    if(s18&&s18<=limit)return {t:'完了',c:'#1d6b4f',bg:'#e9f3ee'};
+    const last=stepAt(x.r,limit);
+    if(last===0)return {t:'未着手',c:'#9aa0ab',bg:'#f1f5f9'};
+    return {t:'S'+last,c:'#a8792b',bg:'#f8f2e4'};
+  };
+  const blocks=months.map(m=>{
+    const list=[...byMonth[m]].sort((a,b)=>a.start-b.start||String(a.name).localeCompare(String(b.name),'ja'));
+    // その月の完了率（180日 or 現在まで）
+    const doneN=list.filter(x=>stepDate(x.r,18)).length;
+    const mJP=(()=>{const mm=m.match(/^(\d{4})\/(\d{2})$/);return mm?`${mm[1]}年${parseInt(mm[2])}月`:m;})();
+    const bodyRows=list.map((x,i)=>{
+      const cells=MS.map(d=>{const c=_cell(x,d);return `<td style="padding:8px 10px;text-align:center;white-space:nowrap;"><span style="display:inline-block;min-width:44px;background:${c.bg};color:${c.c};border-radius:6px;padding:3px 7px;font-size:12px;font-weight:700;">${c.t}</span></td>`;}).join('');
+      const s18=stepDate(x.r,18);
+      const dur=s18?Math.round((s18-x.start)/86400000):null;
+      return `<tr style="background:${i%2?'#f8fafc':'#fff'};border-bottom:1px solid #f1f5f9;">
+        <td style="padding:8px 10px;font-size:13px;font-weight:700;color:#1d1f29;white-space:nowrap;">${x.name}</td>
+        <td style="padding:8px 10px;font-size:12px;color:#6c707b;white-space:nowrap;">${x.course||'—'}</td>
+        <td style="padding:8px 10px;font-size:12px;color:#6c707b;white-space:nowrap;">${x.mg||'—'}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#94a3b8;white-space:nowrap;">${x.prog==='新投稿プログラム'?'NPP':'PP②'}</td>
+        <td style="padding:8px 10px;font-size:12px;color:#6c707b;white-space:nowrap;">${x.start.getMonth()+1}/${x.start.getDate()}</td>
+        ${cells}
+        <td style="padding:8px 10px;text-align:right;font-size:12px;color:${dur!=null?'#1d6b4f':'#cbd0d8'};white-space:nowrap;font-weight:700;">${dur!=null?dur+'日':'—'}</td>
+        <td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:#1d1f29;font-feature-settings:'tnum' 1;">${x.posts??'—'}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="margin-bottom:14px;">
+      <button onclick="_xaStartToggle('${m.replace('/','')}')" style="width:100%;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:13px 16px;cursor:pointer;font-family:inherit;text-align:left;">
+        <span id="xasi-${m.replace('/','')}" style="font-size:12px;color:var(--muted);">▸</span>
+        <span style="font-size:14px;font-weight:800;color:#1d1f29;">${mJP} スタート</span>
+        <span style="font-size:12px;color:var(--muted);font-weight:600;">${list.length}名</span>
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span style="background:#e9f3ee;color:#1d6b4f;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;">完了 ${doneN}名（${(doneN/list.length*100).toFixed(1)}%）</span>
+        </span>
+      </button>
+      <div id="xas-${m.replace('/','')}" style="display:none;margin-top:8px;overflow-x:auto;background:#fff;border:1px solid var(--border);border-radius:12px;">
+        <table style="width:100%;border-collapse:collapse;min-width:1080px;">
+          <thead><tr>
+            <th style="${th}text-align:left;">表示名</th><th style="${th}text-align:left;">コース</th><th style="${th}text-align:left;">担当MG</th>
+            <th style="${th}text-align:left;">PG</th><th style="${th}text-align:left;">開始日</th>
+            ${MS.map(d=>`<th style="${th}text-align:center;">${d}日</th>`).join('')}
+            <th style="${th}text-align:right;">完了日数</th><th style="${th}text-align:right;">投稿数</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:800;color:#1d1f29;margin-bottom:5px;">スタート別 進捗（プログラム開始日起点）<span style="font-size:11px;font-weight:600;color:var(--muted);margin-left:6px;">特進コース・コミットコースのみ</span></div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.7;">
+        各セルは「開始日から◯日時点で到達していたSTEP」を表示します。<span style="color:#1d6b4f;font-weight:700;">完了</span>=STEP18済み／<span style="color:#a8792b;font-weight:700;">S◯</span>=そのSTEPまで完了（そこで止まっている）／<span style="color:#9aa0ab;font-weight:700;">未着手</span>=STEP未完了／— =その日数が未到来<br>
+        投稿数は現在の累計値です（過去時点の投稿数は元データに履歴がないため算出できません）。月名をクリックで開閉します。
+      </div>
+    </div>${blocks}`;
+}
+
 // ── コーチング分析 ──
 function _xaCoaching(rows,ym){
+  // 担当MG別のみコーチング対象外（ベーシックコース）を除外。コース別は比較のため全コース対象
+  if(_xaAxis!=='course')rows=rows.filter(r=>!/ベーシック/.test((r._course||'')));
   const prog=_xaProgramRows();
   const _nk=s=>String(s||'').replace(/[\s　]/g,'');
   const progByName={};
@@ -4770,13 +5382,13 @@ function _xaCoaching(rows,ym){
     const stuck=ps.filter(p=>p._tsuz).length, stag=ps.filter(p=>p._stag).length;
     return {label,n,mk,mkP:_xaPct(mk,n),r5:_xaPct(r5,n),r3:_xaPct(r3,n),r1:_xaPct(r1,n),fp:_xaPct(fp,n),avgP,d18:_xaPct(done18,ps.length),stuck,stag};
   };
-  const list=Object.entries(groups).filter(([,rs])=>rs.length>=3).map(([k,rs])=>build(k,rs)).sort((a,b)=>(b.mkP||0)-(a.mkP||0));
+  const list=Object.entries(groups).filter(([,rs])=>rs.length>=1).map(([k,rs])=>build(k,rs)).sort((a,b)=>(b.mkP||0)-(a.mkP||0));
   const all=build('全体',rows);
   const fmtP=(p,g,m)=>({v:p!=null?p+'%':'—',color:_xaPctColor(p,g,m)});
   const body=[_xaRow([all.label,all.n+'名',all.mk+'名',fmtP(all.mkP,20,10),fmtP(all.r5,25,15),fmtP(all.r3,30,20),fmtP(all.r1,35,25),fmtP(all.fp,80,60),all.avgP!=null?all.avgP+'投稿':'—',fmtP(all.d18,40,25),all.stuck+'名',all.stag+'名'],true),
     ...list.map(g=>_xaRow([g.label,g.n+'名',g.mk+'名',fmtP(g.mkP,20,10),fmtP(g.r5,25,15),fmtP(g.r3,30,20),fmtP(g.r1,35,25),fmtP(g.fp,80,60),g.avgP!=null?g.avgP+'投稿':'—',fmtP(g.d18,40,25),g.stuck+'名',g.stag+'名']))].join('');
   const funnel=_xaFunnelBlock(rows,list.slice(0,6).map(g=>g.label),keyOf);
-  return `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">${_xaAxis==='course'?'コース':'担当MG'}ごとの成果指標（3名以上のグループのみ／万垢率の高い順）</div>
+  return `<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">${_xaAxis==='course'?'コース':'担当MG'}ごとの成果指標（3名以上のグループのみ／万垢率の高い順）<span style="margin-left:6px;">${_xaAxis==='course'?'※全コース対象（ベーシックとの比較用）':'※ベーシックコースはコーチング対象外のため除外'}</span></div>
     ${_xaTable([_xaAxis==='course'?'コース':'担当MG','対象','万垢','万垢率','5,000+','3,000+','1,000+','初投稿完了率','平均投稿数','STEP18完了率','つまずき','停滞'],body,1080)}
     ${funnel}`;
 }
@@ -4989,7 +5601,7 @@ function _gaAchieved(r){
   const now=new Date();
   const [gy,gm]=String(r._gradYm||'').split('/').map(Number);
   if(!gy||!gm)return false;
-  const me=new Date(gy,gm,0,23,59,59);
+  const me=new Date(gy,gm,1,23,59,59);
   const cut=me<now?me:now;
   return !!((r._mankuForm&&r._mankuForm<=cut)||(r._f10000&&r._f10000<=cut));
 }
@@ -4997,7 +5609,7 @@ function _gaReached(r,key){
   const now=new Date();
   const [gy,gm]=String(r._gradYm||'').split('/').map(Number);
   if(!gy||!gm)return false;
-  const me=new Date(gy,gm,0,23,59,59);
+  const me=new Date(gy,gm,1,23,59,59);
   const cut=me<now?me:now;
   const d=r[key];
   return _gaAchieved(r)||!!(d&&d<=cut);
@@ -5119,7 +5731,7 @@ function _gaRender(){
   // 講師別（n≧3）
   const byT={};
   grows.forEach(r=>{const t=((r._teacher||'')+(r._class||'')).trim()||'（未設定）';if(t==='（未設定）')return;if(!byT[t])byT[t]={n:0,ok:0};byT[t].n++;if(_gaAchieved(r))byT[t].ok++;});
-  const tList=Object.entries(byT).filter(([,v])=>v.n>=3).map(([t,v])=>({t,...v,pct:v.n?v.ok/v.n*100:0})).sort((a,b)=>b.pct-a.pct).slice(0,12);
+  const tList=Object.entries(byT).filter(([,v])=>v.n>=1).map(([t,v])=>({t,...v,pct:v.n?v.ok/v.n*100:0})).sort((a,b)=>b.pct-a.pct).slice(0,12);
   const teacherHTML=tList.length?tList.map(x=>{
     const c=x.pct>=20?'#3f8f6b':x.pct>=10?'#a8792b':'#bb4b4b';
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
@@ -6327,7 +6939,7 @@ function processCsNumData(rawData, fields){
   const cGenre=fi(['アカウントジャンル','ジャンル']);
   // "YYYY/MM/DD" と "MM/DD"（年省略）の両方に対応。年省略は直前マイルストーンの日付を基準に、
   // 月が巻き戻っていれば年をまたいだとみなして+1年する。
-  const _seqParse=(raw, prevDate)=>{
+  const _seqParse=(raw, prevDate, gradYmStr)=>{
     const s=String(raw||'').trim();
     if(!s)return null;
     const full=s.match(/^(\d{4})[\/\-年](\d{1,2})[\/\-月](\d{1,2})/);
@@ -6337,7 +6949,16 @@ function processCsNumData(rawData, fields){
       const mo=+md[1], da=+md[2];
       let y=prevDate?prevDate.getFullYear():new Date().getFullYear();
       let cand=new Date(y,mo-1,da);
-      if(prevDate&&cand<prevDate)cand=new Date(y+1,mo-1,da);
+      // 年をまたいだ判定は「60日以上巻き戻った」場合のみ（入力順の軽微な前後で誤って+1年しない）
+      if(prevDate&&(prevDate-cand)>60*86400000)cand=new Date(y+1,mo-1,da);
+      // 卒業月の翌月末を超える未来日にはならない前提で、超えていれば1年戻す
+      if(gradYmStr){
+        const [gy,gm]=String(gradYmStr).split('/').map(Number);
+        if(gy&&gm){
+          const limit=new Date(gy,gm+1,0,23,59,59);
+          while(cand>limit)cand=new Date(cand.getFullYear()-1,cand.getMonth(),cand.getDate());
+        }
+      }
       return cand;
     }
     return null;
@@ -6347,15 +6968,15 @@ function processCsNumData(rawData, fields){
     if(!name)return null;
     const gradYm=_normalizeGM(String(r[cGrad]||''));
     let prev=null;
-    const start=_seqParse(r[cStart],null); prev=start||prev;
-    const account=_seqParse(r[cAccount],prev); prev=account||prev;
-    const declare=_seqParse(r[cDeclare],prev); prev=declare||prev;
-    const firstPost=_seqParse(r[cFirstPost],prev); prev=firstPost||prev;
-    const f100=_seqParse(r[cF100],prev); prev=f100||prev;
-    const f1000=_seqParse(r[cF1000],prev); prev=f1000||prev;
-    const f3000=_seqParse(r[cF3000],prev); prev=f3000||prev;
-    const f5000=_seqParse(r[cF5000],prev); prev=f5000||prev;
-    const f10000=_seqParse(r[cF10000],prev); prev=f10000||prev;
+    const start=_seqParse(r[cStart],null,gradYm); prev=start||prev;
+    const account=_seqParse(r[cAccount],prev,gradYm); prev=account||prev;
+    const declare=_seqParse(r[cDeclare],prev,gradYm); prev=declare||prev;
+    const firstPost=_seqParse(r[cFirstPost],prev,gradYm); prev=firstPost||prev;
+    const f100=_seqParse(r[cF100],prev,gradYm); prev=f100||prev;
+    const f1000=_seqParse(r[cF1000],prev,gradYm); prev=f1000||prev;
+    const f3000=_seqParse(r[cF3000],prev,gradYm); prev=f3000||prev;
+    const f5000=_seqParse(r[cF5000],prev,gradYm); prev=f5000||prev;
+    const f10000=_seqParse(r[cF10000],prev,gradYm); prev=f10000||prev;
     const _igRaw=cIg?String(r[cIg]||'').trim():'';
     let igUrl='',igUser='';
     if(_igRaw){
@@ -6444,7 +7065,7 @@ async function _fetchColumnAWhiteFlags(spreadsheetId,sheetName,key){
 // 属性別ファネルの描画（プルダウン選択時）
 function _funnelStepsFor(gradYM,mode){
   const [_gy,_gm]=gradYM.split('/').map(Number);
-  const _gradMonthEnd=new Date(_gy,_gm,0,23,59,59);
+  const _gradMonthEnd=new Date(_gy,_gm,1,23,59,59);
   const _isPastGrad=_gradMonthEnd<new Date();
   const _cut=d=>!d?d:(_isPastGrad?(d<=_gradMonthEnd?d:null):d);
   const _isManku=r=>!!(_cut(r._f10000)||_cut(r._mankuForm));
@@ -6459,10 +7080,10 @@ function _funnelStepsFor(gradYM,mode){
     {label:'万垢達成',get:r=>_isManku(r),color:'#c0762e'},
   ];
   if(mode==='post'){
-    return [...base.slice(0,3),...[5,10,20,30,40,50].map((n,i)=>({
+    return [...base.slice(0,3),...[5,10,20,30,40,50].map(n=>({
       label:`${n}投稿`,
       get:r=>(r._postCount||0)>=n,
-      color:['#3a8a85','#3a8a85','#3f8f6b','#3f8f6b','#a8792b','#c0762e'][i]
+      color:n<20?'#3a8a85':n<40?'#3f8f6b':n<60?'#a8792b':n<80?'#c0762e':'#bb4b4b'
     }))];
   }
   return base;
@@ -6478,9 +7099,15 @@ function _funnelAttrDim(key){
     const raw=(r._course||'').replace(/講座_/g,'').replace(/コース/g,'').trim();
     if(!raw)return '';
     const parts=raw.split(/[,、]/).map(s=>s.trim()).filter(Boolean);
-    // 特進・コミットはまとめる。複数コースは除外（空文字を返す）
-    if(parts.some(p=>p.includes('特進'))||parts.some(p=>p.includes('コミット')))return '特進・コミット';
-    return parts.length>1?'':parts[0];
+    // 特進・コミットは分けて表示。複数コースは除外（空文字を返す）
+    if(parts.length>1){
+      const tk=parts.some(p=>p.includes('特進')), cm=parts.some(p=>p.includes('コミット'));
+      if(tk&&cm)return '';
+      if(tk)return '特進';
+      if(cm)return 'コミット';
+      return '';
+    }
+    return parts[0];
   };
   return ()=>'';
 }
@@ -6500,7 +7127,7 @@ function _renderFunnelAttrBreakdown(gradYM){
   const getV=_funnelAttrDim(key);
   const groups={};
   rows.forEach(r=>{const v=(getV(r)||'').trim();if(!v)return;(groups[v]=groups[v]||[]).push(r);});
-  const list=Object.entries(groups).filter(([,rs])=>rs.length>=3)
+  const list=Object.entries(groups).filter(([,rs])=>rs.length>=1)
     .map(([k,rs])=>{
       const mk=rs.filter(r=>!!steps[_lastIdx].get(r)).length;
       return {k,rs,mk,pct:rs.length?mk/rs.length*100:0};
@@ -6541,6 +7168,36 @@ function _renderFunnelAttrBreakdown(gradYM){
   }).join('')}</div>`;
 }
 
+// フォロワーファネルの基準値（対象比%と前段からの通過率%）
+// 直近4ヶ月の実績から、KGI万垢率24%を積み上げで達成できる水準に設定
+const FUNNEL_BENCHMARK={
+  'プログラム開始日':{abs:96,rel:null},
+  'アカウント作成日':{abs:86,rel:90},
+  '初投稿完了日':{abs:72,rel:84},
+  '100フォロワー達成日':{abs:56,rel:78},
+  '1000フォロワー達成日':{abs:46,rel:82},
+  '3000フォロワー達成日':{abs:36,rel:78},
+  '5000フォロワー達成日':{abs:29,rel:81},
+  '万垢達成':{abs:24,rel:83},
+};
+
+// 投稿ファネルの基準値（対象比%と前段からの通過率%）
+// 投稿数帯別の万垢達成率（50投稿以上60.5%／30〜49投稿32%／20〜29投稿19.6%）から
+// 積み上げでKGI万垢率24%に到達する水準に設定
+const POST_FUNNEL_BENCHMARK={
+  'プログラム開始日':{abs:96,rel:null},
+  'アカウント作成日':{abs:86,rel:90},
+  '初投稿完了日':{abs:72,rel:84},
+  '5投稿':{abs:65,rel:90},
+  '10投稿':{abs:58,rel:89},
+  '20投稿':{abs:48,rel:83},
+  '30投稿':{abs:38,rel:79},
+  '40投稿':{abs:30,rel:79},
+  '50投稿':{abs:24,rel:80},
+};
+// モードに応じた基準値テーブルを返す（モードは呼び出し側から渡す）
+function _benchTable(mode){return mode==='post'?POST_FUNNEL_BENCHMARK:FUNNEL_BENCHMARK;}
+
 // CS数値管理データから、指定卒業月のファネルHTMLを生成
 function _buildCsNumFunnel(gradYM){
   const rows=csNumRows.filter(r=>r._gradYm===gradYM);
@@ -6548,7 +7205,7 @@ function _buildCsNumFunnel(gradYM){
   const total=rows.length;
   // 卒業月が過去（既卒業）の場合、その卒業月末までに達成したものだけを対象とする
   const [_gy,_gm]=gradYM.split('/').map(Number);
-  const _gradMonthEnd=new Date(_gy,_gm,0,23,59,59);
+  const _gradMonthEnd=new Date(_gy,_gm,1,23,59,59);
   const _now=new Date();
   const _isPastGrad=_gradMonthEnd<_now;
   const _cut=d=>!d?d:(_isPastGrad?(d<=_gradMonthEnd?d:null):d);
@@ -6564,42 +7221,163 @@ function _buildCsNumFunnel(gradYM){
     {label:'万垢達成',get:r=>_isManku(r),color:'#c0762e'},
   ];
   // 投稿ファネル（初投稿完了日までは共通、その後は投稿数の到達段階）
-  const postSteps=[...steps.slice(0,3),...[5,10,20,30,40,50].map((n,i)=>({
+  const _postThs=[5,10,20,30,40,50];
+  const postSteps=[...steps.slice(0,3),..._postThs.map(n=>({
     label:`${n}投稿`,
     get:r=>(r._postCount||0)>=n,
-    color:['#3a8a85','#3a8a85','#3f8f6b','#3f8f6b','#a8792b','#c0762e'][i]
+    color:n<20?'#3a8a85':n<40?'#3f8f6b':n<60?'#a8792b':n<80?'#c0762e':'#bb4b4b'
   }))];
   const _funnelMode=(typeof window!=='undefined'&&window._csFunnelMode)||'follower';
   const activeSteps=_funnelMode==='post'?postSteps:steps;
+  // 累積化：後段に到達している人は前段も到達扱いにして単調化（アカウント開設済み＝プログラム開始済み等）
+  const _stepFlags=activeSteps.map(s=>rows.map(r=>!!s.get(r)));
+  for(let i=_stepFlags.length-2;i>=0;i--)for(let j=0;j<rows.length;j++)if(_stepFlags[i+1][j])_stepFlags[i][j]=true;
+  // 共通の前半3段（プログラム開始／アカウント作成／初投稿完了）はフォロワーファネル基準で統一する
+  if(_funnelMode==='post'){
+    const _fFlags=steps.map(s=>rows.map(r=>!!s.get(r)));
+    for(let i=_fFlags.length-2;i>=0;i--)for(let j=0;j<rows.length;j++)if(_fFlags[i+1][j])_fFlags[i][j]=true;
+    // 前半3段はフォロワーファネルの値で確定（ORで足さず代入）
+    for(let i=0;i<3;i++)for(let j=0;j<rows.length;j++)_stepFlags[i][j]=_fFlags[i][j];
+    // 後段は前半3段（初投稿完了）を上限としてクランプ
+    for(let i=3;i<_stepFlags.length;i++)for(let j=0;j<rows.length;j++)if(!_stepFlags[2][j])_stepFlags[i][j]=false;
+    // 単調性を再確保（後段のみ）
+    for(let i=_stepFlags.length-2;i>=3;i--)for(let j=0;j<rows.length;j++)if(_stepFlags[i+1][j])_stepFlags[i][j]=true;
+  }
+  const _stepN=_stepFlags.map(f=>f.filter(Boolean).length);
   let prevN=null;
   const maxN=total;
-  const rowsHTML=activeSteps.map(s=>{
-    const n=rows.filter(r=>!!s.get(r)).length;
+  const rowsHTML=activeSteps.map((s,_si)=>{
+    const n=_stepN[_si];
     const pct=total?(n/total*100).toFixed(1):'0.0';
     const trans=(prevN!=null&&prevN>0)?(n/prevN*100).toFixed(1):null;
     prevN=n;
     const barW=maxN?Math.max(n/maxN*100,2):0;
+    const bm=(gradYM>='2026/09')?_benchTable(_funnelMode)[s.label]:null;
+    const absOk=bm?parseFloat(pct)>=bm.abs:null;
+    const relOk=(bm&&bm.rel!=null&&trans!=null)?parseFloat(trans)>=bm.rel:null;
+    const bmLine=bm?`<div style="position:absolute;left:${Math.min(bm.abs,100)}%;top:-3px;bottom:-3px;width:2px;background:#1d2233;opacity:.55;"></div>`:'';
     return `<div style="margin-bottom:14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px;">
         <span style="font-size:13px;font-weight:600;color:#1d1f29;">${s.label}</span>
-        <span style="font-size:12px;color:#6c707b;">${trans!=null?`<span style="font-weight:700;color:${trans>=80?'#3f8f6b':'#bb4b4b'};margin-right:8px;">遷移 ${trans}%</span>`:''}${n}名（${pct}%）</span>
+        <span style="font-size:12px;color:#6c707b;">${trans!=null?`<span style="font-weight:700;color:${relOk===null?(trans>=80?'#3f8f6b':'#bb4b4b'):(relOk?'#3f8f6b':'#bb4b4b')};margin-right:8px;">遷移 ${trans}%${bm&&bm.rel!=null?`<span style="font-weight:600;color:#94a3b8;">/${bm.rel}%</span>`:''}</span>`:''}${n}名（<span style="font-weight:700;color:${absOk===null?'#6c707b':(absOk?'#3f8f6b':'#bb4b4b')};">${pct}%</span>${bm?`<span style="color:#94a3b8;">/基準 ${bm.abs}%</span>`:''}）</span>
       </div>
-      <div style="height:28px;background:#eef0f3;border-radius:6px;overflow:hidden;">
-        <div style="height:100%;width:${barW}%;background:${s.color};border-radius:6px;"></div>
+      <div style="position:relative;height:28px;background:#eef0f3;border-radius:6px;">
+        <div style="position:absolute;inset:0;border-radius:6px;overflow:hidden;"><div style="height:100%;width:${barW}%;background:${s.color};"></div></div>
+        ${bmLine}
       </div>
     </div>`;
   }).join('');
   prevN=null;
-  const _csFunnelTableHTML=activeSteps.map(s=>{
-    const n=rows.filter(r=>!!s.get(r)).length;
+
+  // ── 前クオーター（5〜7月）vs 当クオーター（8〜10月）ファネル比較 ──
+  const _qCmpHTML=(()=>{
+    const PREV=['2026/05','2026/06','2026/07'], CUR=['2026/08','2026/09','2026/10'];
+    if(![...PREV,...CUR].includes(gradYM))return '';
+    // 指定卒業月群を集約し、各段階の人数と対象比を返す
+    const _isClosed=(ym)=>{const [gy,gm]=ym.split('/').map(Number);return new Date(gy,gm,1,23,59,59)<new Date();};
+    const _agg=(months)=>{
+      let rs=[]; const used=[];
+      months.forEach(ym=>{
+        const [gy,gm]=ym.split('/').map(Number);
+        const L=new Date(gy,gm,1,23,59,59), nw=new Date();
+        const past=L<nw;
+        const cut=d=>!d?d:(past?(new Date(d)<=L?d:null):d);
+        const isM=r=>!!(cut(r._f10000)||cut(r._mankuForm));
+        const hit=csNumRows.filter(r=>r._gradYm===ym);
+        if(hit.length)used.push(ym);
+        hit.forEach(r=>rs.push({r,cut,isM}));
+      });
+      if(!rs.length)return null;
+      const N=rs.length;
+      const defs=(_funnelMode==='post')
+        ? [['プログラム開始日',x=>x.cut(x.r._start)||x.isM(x.r)],['アカウント作成日',x=>x.cut(x.r._account)||x.isM(x.r)],['初投稿完了日',x=>x.cut(x.r._firstPost)||x.isM(x.r)],
+           ...[5,10,20,30,40,50].map(n=>[n+'投稿',x=>(x.r._postCount||0)>=n])]
+        : [['プログラム開始日',x=>x.cut(x.r._start)||x.isM(x.r)],['アカウント作成日',x=>x.cut(x.r._account)||x.isM(x.r)],['初投稿完了日',x=>x.cut(x.r._firstPost)||x.isM(x.r)],
+           ['100フォロワー達成日',x=>x.cut(x.r._f100)||x.isM(x.r)],['1000フォロワー達成日',x=>x.cut(x.r._f1000)||x.isM(x.r)],
+           ['3000フォロワー達成日',x=>x.cut(x.r._f3000)||x.isM(x.r)],['5000フォロワー達成日',x=>x.cut(x.r._f5000)||x.isM(x.r)],['万垢達成',x=>x.isM(x.r)]];
+      // 各行の到達フラグを取り、後段到達者は前段も到達扱いにして単調化（遷移率が100%を超えないようにする）
+      const flags=defs.map(([,f])=>rs.map(x=>!!f(x)));
+      for(let i=flags.length-2;i>=0;i--)for(let j=0;j<rs.length;j++)if(flags[i+1][j])flags[i][j]=true;
+      // 共通の前半3段はフォロワーファネル基準で統一（投稿ファネルでも同じ人数にする）
+      if(_funnelMode==='post'){
+        const fdefs=[['プログラム開始日',x=>x.cut(x.r._start)||x.isM(x.r)],['アカウント作成日',x=>x.cut(x.r._account)||x.isM(x.r)],['初投稿完了日',x=>x.cut(x.r._firstPost)||x.isM(x.r)],
+          ['100',x=>x.cut(x.r._f100)||x.isM(x.r)],['1000',x=>x.cut(x.r._f1000)||x.isM(x.r)],['3000',x=>x.cut(x.r._f3000)||x.isM(x.r)],['5000',x=>x.cut(x.r._f5000)||x.isM(x.r)],['万垢',x=>x.isM(x.r)]];
+        const ff=fdefs.map(([,f])=>rs.map(x=>!!f(x)));
+        for(let i=ff.length-2;i>=0;i--)for(let j=0;j<rs.length;j++)if(ff[i+1][j])ff[i][j]=true;
+        for(let i=0;i<3;i++)for(let j=0;j<rs.length;j++)flags[i][j]=ff[i][j];
+        for(let i=3;i<flags.length;i++)for(let j=0;j<rs.length;j++)if(!flags[2][j])flags[i][j]=false;
+        for(let i=flags.length-2;i>=3;i--)for(let j=0;j<rs.length;j++)if(flags[i+1][j])flags[i][j]=true;
+      }
+      let prev=null;
+      return {N,used,steps:defs.map(([label],i)=>{
+        const n=flags[i].filter(Boolean).length;
+        const abs=N?n/N*100:0;
+        const rel=(prev!=null&&prev>0)?n/prev*100:null;
+        prev=n;
+        return {label,n,abs,rel};
+      })};
+    };
+    // 成熟度を揃えるため、締め済み（翌月1日を過ぎた）コホートのみで比較する
+    const prevClosed=PREV.filter(_isClosed), curClosed=CUR.filter(_isClosed);
+    const curOpen=CUR.filter(ym=>!_isClosed(ym)&&csNumRows.some(r=>r._gradYm===ym));
+    const A=_agg(prevClosed), B=_agg(curClosed);
+    if(!A||!B)return '';
+    // 2標本比率検定（正規近似）
+    const _nf=x=>{const t=1/(1+0.2316419*Math.abs(x));const d=0.3989423*Math.exp(-x*x/2);const pr=1-d*t*(1.330274*Math.pow(t,4)-1.821256*Math.pow(t,3)+1.781478*t*t-0.356538*t+0.319381);return x>0?pr:1-pr;};
+    const _test=(x1,n1,x2,n2)=>{
+      if(!n1||!n2)return null;
+      const p=(x1+x2)/(n1+n2), se=Math.sqrt(p*(1-p)*(1/n1+1/n2));
+      if(!se)return null;
+      const z=(x1/n1-x2/n2)/se;
+      return {z,p:2*(1-_nf(Math.abs(z)))};
+    };
+    const th='padding:10px 12px;text-align:right;font-size:12px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
+    const rowsHTML=B.steps.map((b,i)=>{
+      const a=A.steps[i];
+      const diff=b.abs-a.abs;
+      const t=_test(b.n,B.N,a.n,A.N);
+      const sig=t&&t.p<0.05;
+      const dCol=diff>=0?'#3f8f6b':'#bb4b4b';
+      const relDiff=(b.rel!=null&&a.rel!=null)?b.rel-a.rel:null;
+      const td="padding:10px 12px;text-align:right;font-size:13px;font-feature-settings:'tnum' 1;white-space:nowrap;";
+      return `<tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1d1f29;white-space:nowrap;">${b.label}</td>
+        <td style="${td}color:#6c707b;">${a.n}名<span style="color:#94a3b8;font-size:11px;margin-left:4px;">${a.abs.toFixed(1)}%</span></td>
+        <td style="${td}color:#1d1f29;font-weight:700;">${b.n}名<span style="color:#94a3b8;font-size:11px;font-weight:600;margin-left:4px;">${b.abs.toFixed(1)}%</span></td>
+        <td style="${td}font-weight:800;color:${dCol};">${diff>=0?'+':''}${diff.toFixed(1)}pt${sig?'<span style="font-size:10px;background:'+dCol+';color:#fff;border-radius:4px;padding:1px 5px;margin-left:5px;">有意</span>':''}</td>
+        <td style="${td}color:#6c707b;">${a.rel!=null?a.rel.toFixed(1)+'%':'—'}</td>
+        <td style="${td}color:#1d1f29;font-weight:700;">${b.rel!=null?b.rel.toFixed(1)+'%':'—'}</td>
+        <td style="${td}font-weight:700;color:${relDiff==null?'#94a3b8':(relDiff>=0?'#3f8f6b':'#bb4b4b')};">${relDiff!=null?(relDiff>=0?'+':'')+relDiff.toFixed(1)+'pt':'—'}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="margin-top:16px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 18px;">
+      <div style="font-size:14px;font-weight:800;color:#1d1f29;margin-bottom:3px;">クオーター比較（${_funnelMode==='post'?'投稿':'フォロワー'}ファネル）</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">前Q＝${A.used.map(m=>parseInt(m.split('/')[1])+'月').join('・')}卒業 ${A.N}名 ／ 当Q＝${B.used.map(m=>parseInt(m.split('/')[1])+'月').join('・')}卒業 ${B.N}名　「有意」は2標本比率検定 p&lt;0.05</div>
+      <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:720px;">
+        <thead><tr>
+          <th style="${th}text-align:left;">段階</th>
+          <th style="${th}">前Q 対象比</th><th style="${th}">当Q 対象比</th><th style="${th}">差</th>
+          <th style="${th}">前Q 遷移率</th><th style="${th}">当Q 遷移率</th><th style="${th}">差</th>
+        </tr></thead>
+        <tbody>${rowsHTML}</tbody>
+      </table></div>
+    </div>`;
+  })();
+  const _csFunnelTableHTML=activeSteps.map((s,_si)=>{
+    const n=_stepN[_si];
     const pct=total?(n/total*100).toFixed(1):'0.0';
     const trans=(prevN!=null&&prevN>0)?(n/prevN*100).toFixed(1):null;
     prevN=n;
+    const bm=(gradYM>='2026/09')?_benchTable(_funnelMode)[s.label]:null;
+    const absOk=bm?parseFloat(pct)>=bm.abs:null;
+    const diff=bm?+(parseFloat(pct)-bm.abs).toFixed(1):null;
+    const relOk=(bm&&bm.rel!=null&&trans!=null)?parseFloat(trans)>=bm.rel:null;
     return `<tr style="border-bottom:1px solid #f1f5f9;">
       <td style="padding:12px 14px;font-size:15px;font-weight:700;color:#1d1f29;white-space:nowrap;">${s.label}</td>
       <td style="padding:12px 14px;text-align:right;font-size:16px;font-weight:800;color:${s.color};font-feature-settings:'tnum' 1;">${n}名</td>
-      <td style="padding:12px 14px;text-align:right;font-size:14px;font-weight:700;color:#4a47a3;font-feature-settings:'tnum' 1;">${pct}%</td>
-      <td style="padding:12px 14px;text-align:right;font-size:15px;font-weight:800;color:${trans!=null?(trans>=80?'#3f8f6b':'#bb4b4b'):'#94a3b8'};font-feature-settings:'tnum' 1;">${trans!=null?trans+'%':'—'}</td>
+      <td style="padding:12px 14px;text-align:right;font-size:14px;font-weight:700;color:${absOk===null?'#4a47a3':(absOk?'#3f8f6b':'#bb4b4b')};font-feature-settings:'tnum' 1;">${pct}%</td>
+      <td style="padding:12px 14px;text-align:right;font-size:13px;font-weight:600;color:#6c707b;font-feature-settings:'tnum' 1;white-space:nowrap;">${bm?`${bm.abs}%<span style="font-size:11px;font-weight:700;color:${absOk?'#3f8f6b':'#bb4b4b'};margin-left:6px;">${diff>=0?'+':''}${diff}</span>`:'—'}</td>
+      <td style="padding:12px 14px;text-align:right;font-size:15px;font-weight:800;color:${trans!=null?(relOk===null?(trans>=80?'#3f8f6b':'#bb4b4b'):(relOk?'#3f8f6b':'#bb4b4b')):'#94a3b8'};font-feature-settings:'tnum' 1;">${trans!=null?trans+'%':'—'}${bm&&bm.rel!=null?`<span style="font-size:11px;font-weight:600;color:#94a3b8;margin-left:5px;">/${bm.rel}%</span>`:''}</td>
     </tr>`;
   }).join('');
   const _firstPostN=rows.filter(r=>!!steps[2].get(r)).length;
@@ -6681,7 +7459,7 @@ function _buildCsNumFunnel(gradYM){
           <option value="性別">性別</option>
         </select>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">生徒情報シートより／性別・地域は氏名・住所からの推定値／n≧3の属性のみ表示</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">生徒情報シートより／性別・地域は氏名・住所からの推定値／該当者が1名以上の属性を表示</div>
       <div id="funnel-attr-breakdown"></div>
     </div>`:'';
   const _mankuRateHTML=_mankuRate!==null?`<div style="margin-top:16px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
@@ -6698,12 +7476,14 @@ function _buildCsNumFunnel(gradYM){
             <th style="padding:10px 14px;text-align:left;font-size:13px;font-weight:700;color:#6c707b;">段階</th>
             <th style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#6c707b;">人数</th>
             <th style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#6c707b;">全体比</th>
-            <th style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#6c707b;">遷移率</th>
+            <th style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#6c707b;">基準値（差）</th>
+            <th style="padding:10px 14px;text-align:right;font-size:13px;font-weight:700;color:#6c707b;">遷移率 / 基準</th>
           </tr></thead>
           <tbody>${_csFunnelTableHTML}</tbody>
         </table>
       </div>
     </div>
+    ${_qCmpHTML}
     ${_mankuRateHTML}
     ${_freqHTML}
     ${_effortHTML}
