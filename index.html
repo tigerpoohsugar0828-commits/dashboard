@@ -2136,7 +2136,7 @@ function processData(raw,fields,fname){
       _fs:fs,_ts:ts,_dd:dd,_cd:cd,_stag:stag,_tsuz:tsuzumari,
       _e50:sp?el>=50:false,_e80:sp?el>=80:false,
       _ym:ym(fd2),_name:nameCol?(r[nameCol]||'—'):'—',
-      _course:_course,_className:_className,_mg:_mg,
+      _course:_normCourse(_course),_className:_className,_mg:_mg,
       _ppCount:ppCount,_isOutlier:_isOutlierFinal,_courseOutlier};
   });
   const months=[...new Set(allRows.map(r=>r._ym).filter(Boolean))].sort();
@@ -2433,6 +2433,22 @@ function _filterNppStatusList(page){
   if(pager)pager.innerHTML=pages>1?Array.from({length:pages},(_,i)=>`<button onclick="_filterNppStatusList(${i})" style="min-width:30px;padding:5px 9px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:${i===_nppStPage?'#4a47a3':'#fff'};color:${i===_nppStPage?'#fff':'#1d1f29'};cursor:pointer;">${i+1}</button>`).join(''):'';
 }
 
+// STEPごとの完了判定：サブステップ（STEP16-1, 16-2…）がある場合は、そのSTEPの最後のサブステップが完了して初めて「完了」とする
+function _stepDoneMax(r){
+  if(!r||!r._sd)return 0;
+  const subs={};
+  Object.keys(r._sd).forEach(k=>{const m=k.match(/^STEP(\d+)(?:-(\d+))?完了日$/);if(!m)return;const n=+m[1],s=m[2]?+m[2]:0;(subs[n]=subs[n]||[]).push([s,k]);});
+  let max=0;
+  Object.keys(subs).forEach(n=>{const list=subs[n].sort((a,b)=>b[0]-a[0]);if(r._sd[list[0][1]])max=Math.max(max,+n);});
+  return max;
+}
+// 最後に完了したサブステップ（例：STEP16-1）
+function _lastSubLabel(r){
+  if(!r||!r._sd)return '—';
+  let n=0,s=0;
+  Object.keys(r._sd).forEach(k=>{if(!r._sd[k])return;const m=k.match(/^STEP(\d+)(?:-(\d+))?完了日$/);if(!m)return;const a=+m[1],b=m[2]?+m[2]:0;if(a>n||(a===n&&b>s)){n=a;s=b;}});
+  return n?`STEP${n}${s?'-'+s:''}`:'未着手';
+}
 // ── 達成しそうな人リスト（未完了だが進捗が進んでいる人・上位50名）──
 function _showLikelyAchieversModal(){
   const _nm=window._nppLikelyMonth;
@@ -2441,23 +2457,15 @@ function _showLikelyAchieversModal(){
     ? post2026AllRows.filter(r=>!r._isOutlier&&r._ym===_nm).map(r=>({...r,_step1d:r._start,_step18raw:r._step18d,_isP26:true})):[];
   const rows=[...nppAllRows.filter(r=>!r._dupPP2&&r._step1Ym===_nm),..._p26];
   // 到達済みの最大STEP番号（STEP15完了日 / STEP15-2完了日 の両形式に対応）
-  const _maxStep=r=>{
-    let m=0;
-    if(r._sd)Object.keys(r._sd).forEach(k=>{
-      if(!r._sd[k])return;
-      const mm=k.match(/^STEP(\d+)(?:-\d+)?完了日$/);
-      if(mm)m=Math.max(m,parseInt(mm[1],10));
-    });
-    return m;
-  };
+  const _maxStep=r=>_stepDoneMax(r);
   const _days=r=>r._step1d?Math.floor((new Date()-r._step1d)/86400000):null;
   // 達成見込み = STEP18未完了 かつ 60日未経過 かつ STEP15/16/17まで到達している人
   const cands=rows.filter(r=>!r._step18raw).map(r=>({r,step:_maxStep(r),days:_days(r)}))
     .filter(x=>[13,14,15,16,17].includes(x.step)&&x.days!=null&&x.days<60)
     .sort((a,b)=>(b.step-a.step)||((a.days??9999)-(b.days??9999)));
   const th='padding:9px 12px;text-align:left;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;';
-  const _tbl=(list)=>`<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:620px;">
-    <thead><tr><th style="${th}">#</th><th style="${th}">お名前</th><th style="${th}">コース</th><th style="${th}">クラス</th><th style="${th}text-align:right;">残STEP</th><th style="${th}text-align:right;">経過日数</th><th style="${th}text-align:right;">60日まで</th><th style="${th}">プログラム</th></tr></thead>
+  const _tbl=(list)=>`<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:760px;">
+    <thead><tr><th style="${th}">#</th><th style="${th}">お名前</th><th style="${th}">コース</th><th style="${th}">クラス</th><th style="${th}">最後に完了したSTEP</th><th style="${th}text-align:right;">残STEP</th><th style="${th}text-align:right;">経過日数</th><th style="${th}text-align:right;">60日まで</th><th style="${th}">プログラム</th></tr></thead>
     <tbody>${list.map((x,i)=>{const r=x.r;const td='padding:9px 12px;font-size:13px;color:#1d1f29;white-space:nowrap;';
       const left=60-x.days;
       const lc=left<=7?'#bb4b4b':left<=14?'#a8792b':'#3f8f6b';
@@ -2466,6 +2474,7 @@ function _showLikelyAchieversModal(){
         <td style="${td}font-weight:700;">${r._name||(r._raw&&(r._raw['表示名']||r._raw['名前']))||'—'}</td>
         <td style="${td}">${(r._course||'—').replace(/講座_/g,'')}</td>
         <td style="${td}">${r._className||r._class||'—'}</td>
+        <td style="${td}font-weight:800;color:#3f6aa8;">${_lastSubLabel(r)}</td>
         <td style="${td}text-align:right;font-weight:700;">${18-x.step}</td>
         <td style="${td}text-align:right;">${x.days}日</td>
         <td style="${td}text-align:right;font-weight:800;color:${lc};">あと${left}日</td>
@@ -3906,7 +3915,7 @@ function _renderKPIPhaseBanner(gradYM){
           <div style="height:10px;background:rgba(255,255,255,.14);border-radius:6px;overflow:hidden;"><div style="height:100%;width:${fill}%;background:#f0c54e;border-radius:6px;"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:12px;opacity:.7;margin-top:6px;"><span>${count??'—'}人 (${hasV?pct:'—'}%)</span><span>${targetN}人 (${targetPct}%)</span></div>
         </div>`:'';
-      return `<div style="background:#223049;border-radius:14px;padding:22px 24px;color:#fff;display:flex;flex-direction:column;gap:16px;">
+      return `<div style="background:#223049;border-radius:14px;padding:22px 24px;color:#fff;display:flex;flex-direction:column;gap:16px;align-self:start;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:17px;font-weight:700;">${label}${refTag?`<span style="font-size:12px;opacity:.7;font-weight:600;margin-left:3px;">${refTag}</span>`:''}</span>${pill}</div>${badge}</div>
         <div style="display:grid;grid-template-columns:${targetN!=null?'auto 1fr':'1fr'};gap:28px;align-items:center;">
           <div><div style="font-size:60px;font-weight:800;line-height:1;letter-spacing:-2px;font-feature-settings:'tnum' 1;">${hasV?pct:'—'}<span style="font-size:32px;font-weight:700;">%</span></div><div style="font-size:15px;opacity:.7;margin-top:10px;">${count??'—'} / ${denom||'—'}人</div></div>
@@ -3957,6 +3966,21 @@ function _renderKPIPhaseBanner(gradYM){
     const _finalKgi=_getPhaseForCohort(KGI_KPI_PHASES[5],gradYM).kpiMansoku;
     if(phase.kpiMansoku!==null){
       heroCard=_heroBig({label:phase.id==='grad'?'KGI 万垢率':'KPI① 万垢率',pill:`目標 ${mansokuTarget}%`,hasV:actMansokuPct!==null,pct:actMansokuPct,count:actMansoku,denom:mansokuDenom,targetPct:mansokuTarget,goal20:['phase2','phase3','phase4'].includes(phase.id)?_finalKgi:null,click:`_showWeeklyMankuModal('${gradYM}')`});
+      // 卒業後の万垢率（卒業日以降に達成した人も含めた現時点の値）。卒業済みのクラスがある卒業月に表示
+      if(phase.id==='grad'&&typeof _postGradManku==='function'){
+        const pg=_postGradManku(gradYM);
+        const anyGrad=(typeof csNumRows!=='undefined'?csNumRows:[]).some(r=>r._gradYm===gradYM&&r._gradDate instanceof Date&&r._gradDate<new Date());
+        if(pg.n&&anyGrad){
+          const p=+(pg.all/pg.n*100).toFixed(1);
+          heroCard=`<div style="display:flex;flex-direction:column;gap:10px;">${heroCard}
+            <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div><div style="font-size:13px;font-weight:800;color:#1d1f29;">卒業後の万垢率</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;">卒業日より後に達成した人も含めた現時点の値（KGIは卒業日時点で判定）</div></div>
+              <div style="text-align:right;"><span style="font-size:24px;font-weight:800;color:#1d1f29;font-feature-settings:'tnum' 1;">${p}<span style="font-size:14px;">%</span></span>
+              <div style="font-size:11.5px;color:#6c707b;">${pg.all} / ${pg.n}人（卒業後に達成 +${pg.after}人）</div></div>
+            </div></div>`;
+        }
+      }
       if(phase.kdiPosts!=null){
         const isRef=phase.kdiKind==='ref';
         // 投稿完了率は達成=赤・未達=青で表示（卒業含むフェーズ2〜4）。判定基準は8月卒業まで20%／9月卒業以降24%。
@@ -4631,7 +4655,17 @@ function _renderKPIPhaseBanner(gradYM){
         // 帯人数はKPI②カードと同じデータソース（CS数値管理シート優先）で算出
         const _bandRows=(typeof csNumRows!=='undefined'&&csNumRows.length&&csNumRows.filter(r=>r._gradYm===gradYM).length)
           ? csNumRows.filter(r=>r._gradYm===gradYM) : (hasFollower?fCohortRows:null);
-        const _bandRng=(lo,hi)=>_bandRows?_bandRows.filter(r=>{const f=r._todayFollower||0;return f>=lo&&f<hi;}).length:null;
+        const _nowB=new Date();
+        const _tierB=r=>{
+          if(r._gradEnd&&r._gradEnd<_nowB){ // 卒業済み：卒業日時点の到達段階
+            if(r._f10000||r._mankuForm)return 10000;if(r._f5000)return 5000;if(r._f3000)return 3000;if(r._f1000)return 1000;return 0;}
+          if(r._f10000||r._mankuForm)return 10000;
+          const f=r._todayFollower||0;return f>=5000?5000:(f>=3000?3000:(f>=1000?1000:0));};
+        const _bandRng=(lo,hi)=>_bandRows?_bandRows.filter(r=>_tierB(r)===lo).length:null;
+        const _isGradB=r=>!!(r._gradEnd&&r._gradEnd<_nowB);
+        const _split=lo=>{if(!_bandRows)return null;const L=_bandRows.filter(r=>_tierB(r)===lo);return {cur:L.filter(r=>!_isGradB(r)).length,grad:L.filter(_isGradB).length};};
+        const _splitTag=lo=>{const s=_split(lo);if(!s||(!s.grad&&!s.cur))return '';
+          return `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;"><span style="font-size:11px;font-weight:700;color:#223049;background:#fff;border:1px solid #223049;border-radius:5px;padding:1px 7px;">在籍中 ${s.cur}人</span><span style="font-size:11px;font-weight:700;color:#fff;background:#6c707b;border-radius:5px;padding:2px 8px;">卒業済 ${s.grad}人</span></div>`;};
         const b5to10=_bandRng(5000,10000);
         const b3to5 =_bandRng(3000,5000);
         const b1to3 =_bandRng(1000,3000);
@@ -4652,13 +4686,13 @@ function _renderKPIPhaseBanner(gradYM){
         const _cumSub=(rateLabel,pctV,cnt)=>pctV!==null?`${rateLabel} ${pctV}%（${cnt} / ${fCohortNEff}人）`:'フォロワー読込で表示';
         const _cumFill=(pctV)=>pctV!==null?Math.max(pctV,2):0;
         const _cumRight=(pctV)=>pctV!==null?pctV+'%':'';
-        const card5=_card('#c0762e','#fdf8f2','5,000〜10,000人',_bandBig(b5to10),_cumSub('5,000人以上率',act5000Pct,act5000),_cumFill(act5000Pct),_cumRight(act5000Pct),b5to10!==null?`onclick="showFollowerRangeList(5000,10000,'5,000〜10,000人')"`:'');
-        const card3=_card('#3f6aa8','#f4f7fb','3,000〜5,000人',_bandBig(b3to5),_cumSub('3,000人以上率',act3000Pct,act3000),_cumFill(act3000Pct),_cumRight(act3000Pct),b3to5!==null?`onclick="showFollowerRangeList(3000,5000,'3,000〜5,000人')"`:'');
-        const card1=_card('#3f8f6b','#f1f8f4','1,000〜3,000人',_bandBig(b1to3),_cumSub('1,000人以上率',act1000Pct,act1000),_cumFill(act1000Pct),_cumRight(act1000Pct),b1to3!==null?`onclick="showFollowerRangeList(1000,3000,'1,000〜3,000人')"`:'');
+        const card5=_card('#c0762e','#fdf8f2','5,000〜10,000人',_bandBig(b5to10)+_splitTag(5000),_cumSub('5,000人以上率',act5000Pct,act5000),_cumFill(act5000Pct),_cumRight(act5000Pct),b5to10!==null?`onclick="showFollowerRangeList(5000,10000,'5,000〜10,000人')"`:'');
+        const card3=_card('#3f6aa8','#f4f7fb','3,000〜5,000人',_bandBig(b3to5)+_splitTag(3000),_cumSub('3,000人以上率',act3000Pct,act3000),_cumFill(act3000Pct),_cumRight(act3000Pct),b3to5!==null?`onclick="showFollowerRangeList(3000,5000,'3,000〜5,000人')"`:'');
+        const card1=_card('#3f8f6b','#f1f8f4','1,000〜3,000人',_bandBig(b1to3)+_splitTag(1000),_cumSub('1,000人以上率',act1000Pct,act1000),_cumFill(act1000Pct),_cumRight(act1000Pct),b1to3!==null?`onclick="showFollowerRangeList(1000,3000,'1,000〜3,000人')"`:'');
         return`<div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:8px;">${_icoBar}<span style="font-size:15px;font-weight:700;color:#1d1f29;">あと何人で万垢達成</span><span style="font-size:12px;color:#94a3b8;">（目標${kgiTargetN??'—'}人）</span></div>
-            <span style="font-size:13px;color:#6c707b;font-weight:600;">全体 ${total||'—'}人</span>
+            <span style="font-size:13px;color:#6c707b;font-weight:600;">全体 ${total||'—'}人${_bandRows?`（在籍中 ${_bandRows.filter(r=>!_isGradB(r)).length}人・卒業済 ${_bandRows.filter(_isGradB).length}人）`:''}</span>
           </div>
           <div class="grad-bands-grid">${needCard}${card5}${card3}${card1}</div>
         </div>`;
@@ -4873,7 +4907,7 @@ function processPostDataStandalone(raw, fname='投稿数データ'){
     let _enrollMonth=ym(pd(_enrollRaw))||_normalizeGM(_enrollRaw)||'';
     // BS列（卒業月）を取得
     const _gradMonth=_gradMonthKey?String(r[_gradMonthKey]||'').trim():'';
-    return{_raw:r,_name:name,_className:className,_course:course,_multiCourse,_posts:posts,_postCount:postCount,
+    return{_raw:r,_name:name,_className:className,_course:_normCourse(course),_multiCourse,_posts:posts,_postCount:postCount,
       _firstPost:firstPost,_lastPost:lastPost,
       _post10in30:post10in30,_post30in50:post30in50,_firstPostMonth:firstPostMonth,_maxPosts:maxPosts,
       _enrollMonth,_mg,
@@ -5517,6 +5551,14 @@ function _renderFollowerListModal(rows,label,sub,opts){
       const barW=Math.max(Math.round((r._todayFollower||0)/_fMax*100),3);
       const cc=_ccMap[(r._name||'').trim()]||{course:'',className:'',mg:'',posts:null};
       const chips=[];
+      // 卒業済みかどうか（CS数値管理シートの卒業予定日で判定）
+      {const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+       const _cs=(r._gradDate!==undefined)?r:((typeof csNumRows!=='undefined')?csNumRows.find(x=>_nk(x._name)===_nk(r._name)):null);
+       const _gd=_cs&&_cs._gradDate instanceof Date&&!isNaN(_cs._gradDate)?_cs._gradDate:null;
+       if(_gd){const _end=new Date(_gd.getFullYear(),_gd.getMonth(),_gd.getDate(),23,59,59);const _md=`${_gd.getMonth()+1}/${_gd.getDate()}`;
+         chips.push(_end<new Date()
+           ?`<span style="display:inline-block;font-size:11px;font-weight:700;color:#fff;background:#6c707b;border-radius:5px;padding:2px 8px;">卒業済（${_md}）</span>`
+           :`<span style="display:inline-block;font-size:11px;font-weight:700;color:#223049;background:#fff;border:1px solid #223049;border-radius:5px;padding:1px 7px;">在籍中（${_md}卒業）</span>`);}}
       if(cc.course)chips.push(`<span style="display:inline-block;font-size:11px;font-weight:600;color:#4a47a3;background:#ecedf7;border-radius:5px;padding:2px 7px;">${cc.course}</span>`);
       if(cc.className)chips.push(`<span style="display:inline-block;font-size:11px;font-weight:600;color:#6c707b;background:#f1f5f9;border-radius:5px;padding:2px 7px;">${cc.className}</span>`);
       if(cc.mg)chips.push(`<span style="display:inline-block;font-size:11px;font-weight:600;color:#3f8f6b;background:#e9f3ee;border-radius:5px;padding:2px 7px;">MG: ${cc.mg}</span>`);
@@ -5571,16 +5613,26 @@ function _classifyAppointerAd(raw){
   return adKw.some(kw=>s.toLowerCase().includes(kw.toLowerCase()));
 }
 
+// コース名の正規化：「（値上げ後）」などの表記は無いものとして扱う
+function _normCourse(s){return [...new Set(String(s||'').replace(/[（(]\s*値上げ後\s*[）)]/g,'').replace(/値上げ後/g,'').split(/[,、]/).map(x=>x.trim()).filter(Boolean))].join(', ');}
+
 // ジャンル名の正規化（14カテゴリにキーワードで寄せる・グローバル）
 function _normalizeGenre(raw){
   const s=(raw||'').trim();
   if(!s)return'（未設定）';
   const rules=[
+    // 独立ジャンル（それぞれ単独の行として集計）
+    ['朝活',['朝活']],
+    ['占い',['占い']],
+    ['実店舗',['実店舗','オンラインショップ']],
+    ['エンタメ',['エンタメ']],
+    ['インタビュー',['インタビュー']],
+    ['介護',['介護']],
     ['ペット・動物系',['ペット','動物','犬','猫','いぬ','ねこ']],
     ['健康・医療系',['健康','医療','メンタル','看護','ヘルス']],
     ['子育て系',['子育て','育児','ママ','パパ','妊娠','子供','こども','保育']],
     ['暮らし系',['暮らし','ライフスタイル','インテリア','家事','収納','掃除','家づくり','便利術','汚部屋','農業','家庭菜園','園芸','ガーデ']],
-    ['レシピ系',['レシピ','料理','献立','弁当','お菓子','パン','クッキング','冷凍ストック','冷凍','食育','寿司','すし','グルメ飯']],
+    ['レシピ系',['レシピ','料理','献立','弁当','お菓子','パン','クッキング','冷凍ストック','冷凍','食育','寿司','すし','グルメ飯','ごはん','食費']],
     ['ダイエット・ボディメイク系',['ダイエット','ボディメイク','筋トレ','トレーニング','フィットネス','痩せ','ヨガ','体質改善','ストレッチ','スポーツ','ランニング','マラソン']],
     ['スキル・IT系',['スキル','IT','プログラ','エンジニア','テック','アプリ','ガジェット','AI','office','エクセル','excel','パソコン','pc','自動車','車','バイク']],
     ['スポット・グルメ系',['スポット','グルメ','飲食','カフェ','レストラン','旅行','旅','観光','お出かけ']],
@@ -5785,7 +5837,7 @@ function _wrProgBreak(ym){
   const sm=(typeof _gradMonthToNPPMonth==='function')?_gradMonthToNPPMonth(ym):null;if(!sm)return null;
   const toD=v=>{if(!v)return null;const d=(v instanceof Date)?v:new Date(v);return isNaN(d)?null:d;};
   const ymOf=d=>d?d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0'):null;
-  const last=r=>{let l=0;if(r._sd)Object.keys(r._sd).forEach(k=>{if(!r._sd[k])return;const m=k.match(/^STEP(\d+)(?:-\d+)?完了日$/);if(m)l=Math.max(l,+m[1]);});return l;};
+  const last=r=>_stepDoneMax(r);
   const now=new Date();
   const mk=(label,rows,startOf,doneOf)=>{
     const L=rows.map(r=>({s:toD(startOf(r)),d:toD(doneOf(r)),l:last(r)})).filter(x=>x.s&&ymOf(x.s)===sm);
@@ -5799,6 +5851,17 @@ function _wrProgBreak(ym){
   const tot={label:'合計',n:npp.n+pp2.n,done:npp.done+pp2.done,in60:npp.in60+pp2.in60,stuck:{}};
   [npp,pp2].forEach(p=>Object.entries(p.stuck).forEach(([k,v])=>{tot.stuck[k]=(tot.stuck[k]||0)+v;}));
   return {startYm:sm,progs:[npp,pp2],total:tot};
+}
+
+// 担当MG（プログラムシートの「担当MG名」）ごとの投稿状況（5名以上の担当のみ）
+function _wrByMg(st){
+  const nk=s=>String(s||'').replace(/[\s　]/g,'').replace(/[（(].*?[）)]/g,'');
+  const mgBy={};
+  [...(typeof post2026AllRows!=='undefined'?post2026AllRows:[]),...(typeof nppAllRows!=='undefined'?nppAllRows:[])].forEach(r=>{const k=nk(r._name),v=String(r._mg||'').trim();if(k&&v&&!mgBy[k])mgBy[k]=v;});
+  const m={};
+  st.forEach(x=>{const mg=mgBy[nk(x.r._name)];if(!mg)return;const g=(m[mg]=m[mg]||{n:0,sum:0,cnt:0,noPost:0,mk:0});g.n++;
+    if(x.r._postCount!=null){g.sum+=x.r._postCount;g.cnt++;}if(!x.r._postCount&&!x.r._firstPost)g.noPost++;if(x.s.mk)g.mk++;});
+  return Object.entries(m).filter(([,g])=>g.n>=5).map(([k,g])=>({k,n:g.n,avg:g.cnt?+(g.sum/g.cnt).toFixed(1):null,noPost:g.noPost,mk:g.mk}));
 }
 function _wrBuildData(){
   if(typeof csNumRows==='undefined'||!csNumRows.length)return null;
@@ -5834,7 +5897,7 @@ function _wrBuildData(){
       postMed:med(rs.map(r=>r._postCount)),post30:rs.filter(r=>(r._postCount||0)>=30).length,noPost:rs.filter(r=>!r._postCount&&!r._firstPost).length,
       land:land?+land:null,landN:landN?+landN:null,p1,daysLeft:Math.ceil((lim-now)/86400000),
       progBreak:(ph.id==='prep'||ph.id==='phase1')?_wrProgBreak(ym):null,
-      bySup:_wrBySup(st),stats:(ph.id==='prep'||ph.id==='phase1')?null:_wrStats(ym),speed:_wrSpeed(rs,ym),attr:_wrAttr(rs,st),mkProfile:{postMed:med(st.filter(x=>x.s.mk).map(x=>x.r._postCount)),fpMed:_wrSpeed(st.filter(x=>x.s.mk).map(x=>x.r),ym).fpMed}};
+      bySup:_wrBySup(st),byMg:_wrByMg(st),stats:(ph.id==='prep'||ph.id==='phase1')?null:_wrStats(ym),speed:_wrSpeed(rs,ym),attr:_wrAttr(rs,st),mkProfile:{postMed:med(st.filter(x=>x.s.mk).map(x=>x.r._postCount)),fpMed:_wrSpeed(st.filter(x=>x.s.mk).map(x=>x.r),ym).fpMed}};
   });
   const past=[...new Set(csNumRows.map(r=>r._gradYm).filter(Boolean))].sort().filter(ym=>limOf(ym)<now&&ym>='2026/02').map(ym=>{
     const rs=csNumRows.filter(r=>r._gradYm===ym);const c=count(rs,limOf(ym));const sp=_wrSpeed(rs,ym);
@@ -6124,9 +6187,15 @@ function _xaSupMg(){
     (byClass[key]=byClass[key]||{teacher:t,cls:c,gm,rs:[]}).rs.push(r);
   });
   const bySup={};
+  // 講師名がサポMGの名前と同じクラス（サポマネ本人が講師のクラス）は「サポマネクラス」にまとめる
+  // ひらがな→カタカナにそろえ、空白・括弧書きを除いて比べる（はらペコ／腹ぺこ 等の表記ゆれも吸収）
+  const _nm=s=>{let t=String(s||'').replace(/[\s　]/g,'').replace(/[（(].*?[）)]/g,'').replace(/[\u3041-\u3096]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60));return t.replace(/^(ハラ|腹)ペコ.*/,'ハラペコ');};
+  const _supNames=new Set(Object.values(byClass).map(x=>{const i=_teacherInfo(x.teacher);return _normSupMg((i&&i._supMg)||'');}).filter(s=>s&&!/^（/.test(s)).map(_nm));
   Object.values(byClass).forEach(x=>{
     const info=_teacherInfo(x.teacher);
-    const sup=_normSupMg((info&&info._supMg)||'');
+    let sup=_normSupMg((info&&info._supMg)||'');
+    const tn=_nm(x.teacher);
+    if(/^（/.test(sup)&&tn&&_supNames.has(tn))sup='サポマネクラス';
     (bySup[sup]=bySup[sup]||[]).push({...x,info});
   });
   const sups=Object.keys(bySup).sort((a,b)=>{
@@ -7562,6 +7631,94 @@ function _gaRender(){
     ${body}
   </div>`;
 
+  // ── ジャンルの難易度と「万垢までの流れ」──
+  const _dD=v=>{if(!v)return null;const d=(v instanceof Date)?v:new Date(v);return isNaN(d)?null:d;};
+  const _hrOf=r=>{let g=_dD(r._gradDate);const p=String(r._gradYm||'').split('/').map(Number);if(!g&&p[0])g=new Date(p[0],p[1],0);return g?new Date(g.getTime()-180*86400000):null;};
+  const _mkDate=r=>{const a=_dD(r._f10000),b=_dD(r._mankuForm);return a&&b?(a<b?a:b):(a||b);};
+  const _dd=(x,y)=>(x&&y)?Math.round((y-x)/86400000):null;
+  // 投稿数シートの投稿日から「その日までに何投稿していたか」を求める
+  const _pmap=window._gaPostDatesMap||(window._gaPostDatesMap=(()=>{const m={};(typeof postStandaloneRows!=='undefined'?postStandaloneRows:[]).forEach(p=>{const k=String(p._name||'').replace(/[\s　]/g,'');if(!k||!Array.isArray(p._posts))return;m[k]=p._posts.map(_dD).filter(Boolean).sort((a,b)=>a-b);});return m;})());
+  const _postsAt=(r,d)=>{if(!d)return null;const a=_pmap[String(r._name||'').replace(/[\s　]/g,'')];if(!a||!a.length)return null;let n=0;for(const x of a){if(x<=d)n++;else break;}return n;};
+  const _flow=list=>{const ach=list.filter(_gaAchieved);
+    const col=f=>_gaMed(ach.map(f).filter(v=>v!=null&&v>=0&&v<=400));
+    return {n:ach.length,posts:_gaMed(ach.map(r=>r._postCount).filter(v=>v!=null)),
+      fp:col(r=>_dd(_hrOf(r),_dD(r._firstPost))),
+      k1:col(r=>_dd(_hrOf(r),_dD(r._f1000))),
+      k3:col(r=>_dd(_hrOf(r),_dD(r._f3000))),
+      k5:col(r=>_dd(_hrOf(r),_dD(r._f5000))),
+      mk:col(r=>_dd(_hrOf(r),_mkDate(r))),
+      fp2mk:col(r=>_dd(_dD(r._firstPost),_mkDate(r))),
+      pAt1:_gaMed(ach.map(r=>_postsAt(r,_dD(r._f1000))).filter(v=>v!=null)),
+      pAt3:_gaMed(ach.map(r=>_postsAt(r,_dD(r._f3000))).filter(v=>v!=null)),
+      pAt5:_gaMed(ach.map(r=>_postsAt(r,_dD(r._f5000))).filter(v=>v!=null)),
+      pAtMk:_gaMed(ach.map(r=>_postsAt(r,_mkDate(r))).filter(v=>v!=null)),
+      pAtMkList:ach.map(r=>_postsAt(r,_mkDate(r))).filter(v=>v!=null),
+      pAtMkAvg:(()=>{const a=ach.map(r=>_postsAt(r,_mkDate(r))).filter(v=>v!=null);return a.length?+(a.reduce((s,x)=>s+x,0)/a.length).toFixed(1):null;})()};};
+  const FG=_flow(grows), FA=_flow(rows);
+  // 卒業月を選んでいるときは、同じジャンルの過去の万垢達成者（選択月より前の確定済み卒業月）と比べる
+  const _nowP=new Date();
+  const _pastRows=(monthSel&&basis!=='start')?(typeof csNumRows!=='undefined'?csNumRows:[]).filter(r=>{
+    if(!r._gradYm||r._gradYm>=monthSel)return false;const p=r._gradYm.split('/').map(Number);
+    if(new Date(p[0],p[1],1,23,59,59)>=_nowP)return false;return (DIM.get(r)||'（未設定）')===_gaGenre;}):[];
+  const FP=_pastRows.length?_flow(_pastRows):null;
+  const _pastMonths=[...new Set(_pastRows.map(r=>r._gradYm))].sort();
+  // 難易度：10名以上のジャンルで万垢率を順位づけ（上位1/3=易しい、下位1/3=難しい）
+  // 難易度は選択中の卒業月ではなく、確定済みの全卒業月をまとめて判定する（月ごとのブレを避けるため）
+  const _now=new Date();
+  const _doneRows=(typeof csNumRows!=='undefined'?csNumRows:[]).filter(r=>{const p=String(r._gradYm||'').split('/').map(Number);return p[0]&&new Date(p[0],p[1],1,23,59,59)<_now;});
+  const _gmAll={};_doneRows.forEach(r=>{const g=DIM.get(r)||'（未設定）';const v=(_gmAll[g]=_gmAll[g]||{n:0,ok:0});v.n++;if(_gaAchieved(r))v.ok++;});
+  const _doneMonths=[...new Set(_doneRows.map(r=>r._gradYm))].sort();
+  const _rk=Object.entries(_gmAll).filter(([k,v])=>v.n>=20&&!OUT.includes(k)).map(([k,v])=>({k,p:v.n?v.ok/v.n*100:0,n:v.n,ok:v.ok})).sort((a,b)=>b.p-a.p);
+  const _pos=_rk.findIndex(x=>x.k===_gaGenre);
+  const _lvl=_pos<0?null:(_pos<_rk.length/3?{t:'易しい',c:'#3f8f6b'}:(_pos<_rk.length*2/3?{t:'普通',c:'#a8792b'}:{t:'難しい',c:'#bb4b4b'}));
+  const _span=(x,y)=>(x!=null&&y!=null&&y>=x)?y-x:null;
+  const _steps=[['初投稿',FG.fp,FA.fp,1],['1,000人',FG.k1,FA.k1,FG.pAt1],['3,000人',FG.k3,FA.k3,FG.pAt3],['5,000人',FG.k5,FA.k5,FG.pAt5],['万垢',FG.mk,FA.mk,FG.pAtMk]];
+  const _stepBox=_steps.map(([lb,g,a,pp],i)=>{
+    if(g==null)pp=null;
+    const last=i===_steps.length-1;
+    const prevG=i?_steps[i-1][1]:null;
+    const sub=(i&&prevG!=null&&g!=null)?('前段から+'+(_span(prevG,g)??'—')+'日'):(a!=null?('全体 '+a+'日目'):'');
+    return '<div style="flex:1;min-width:108px;text-align:center;padding:12px 8px;background:'+(last?'#fff7ed':'#f8fafc')+';border:1px solid var(--border);'+(i?'border-left:none;':'')+(i===0?'border-radius:10px 0 0 10px;':'')+(last?'border-radius:0 10px 10px 0;':'')+'">'
+      +'<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">'+lb+'</div>'
+      +'<div style="font-size:20px;font-weight:800;color:'+(last?'#c0762e':'var(--text)')+';font-feature-settings:\'tnum\' 1;">'+(g!=null?g+'<span style="font-size:11px;font-weight:600;">日目</span>':'—')+'</div>'
+      +'<div style="font-size:10.5px;color:#94a3b8;margin-top:3px;">'+sub+'</div>'
+      +(pp!=null?'<div style="font-size:11.5px;font-weight:700;color:#3f6aa8;margin-top:5px;">'+pp+'投稿時点</div>':'')+'</div>';
+  }).join('');
+  const _flowText=(()=>{const L=[];
+    const _near=(x,y)=>Math.abs(x-y)<=2;
+    if(FG.n<5)return '・達成者が'+FG.n+'名と少ないため、以下の数値は参考値です。';
+    if(FG.fp!=null&&FA.fp!=null)L.push(_near(FG.fp,FA.fp)?('初投稿は初回HRから'+FG.fp+'日目で、全体の達成者（'+FA.fp+'日目）と同程度。'):FG.fp<FA.fp?('初投稿は初回HRから'+FG.fp+'日目と、全体の達成者（'+FA.fp+'日目）より早い。立ち上がりの速さが万垢につながっている。'):('初投稿は初回HRから'+FG.fp+'日目と、全体の達成者（'+FA.fp+'日目）より遅い。投稿開始までの準備に時間がかかる傾向。'));
+    if(FG.pAtMk!=null&&FA.pAtMk!=null)L.push(_near(FG.pAtMk,FA.pAtMk)?('万垢に届いた時点の投稿数は'+FG.pAtMk+'投稿で、全体（'+FA.pAtMk+'投稿）と同程度。'):FG.pAtMk<FA.pAtMk?('万垢に届いた時点の投稿数は'+FG.pAtMk+'投稿で、全体（'+FA.pAtMk+'投稿）より少なく済んでいる。1投稿あたりの伸びが大きいジャンル。'):('万垢に届くまでに'+FG.pAtMk+'投稿かかっており、全体（'+FA.pAtMk+'投稿）より多い。投稿数を積み上げて届くジャンル。'));
+    else if(FG.posts!=null&&FA.posts!=null)L.push(_near(FG.posts,FA.posts)?('万垢達成者の投稿数は'+FG.posts+'投稿で、全体（'+FA.posts+'投稿）と同程度。'):FG.posts<FA.posts?('万垢までの投稿数は'+FG.posts+'投稿で、全体（'+FA.posts+'投稿）より少なく済んでいる。1投稿あたりの伸びが大きいジャンル。'):('万垢までに'+FG.posts+'投稿かかっており、全体（'+FA.posts+'投稿）より多い。投稿数を積み上げて届くジャンル。'));
+    const seg=[['初投稿→1,000人',_span(FG.fp,FG.k1)],['1,000人→5,000人',_span(FG.k1,FG.k5)],['5,000人→万垢',_span(FG.k5,FG.mk)]].filter(x=>x[1]!=null&&x[1]>0).sort((a,b)=>b[1]-a[1]);
+    if(seg.length)L.push('いちばん時間がかかるのは「'+seg[0][0]+'」の'+seg[0][1]+'日。ここがこのジャンルの山場。');
+    if(_lvl){const R=_rk[_pos];L.push('難易度は「'+_lvl.t+'」（確定済み'+_doneMonths.length+'ヶ月合算の万垢率 '+R.p.toFixed(1)+'%・'+R.ok+'/'+R.n+'名、'+_rk.length+'ジャンル中'+(_pos+1)+'位）。');}
+    return L.map(x=>'・'+x).join('<br>');})();
+  const flowHTML=FG.n
+    ? '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
+      +_card('難易度',_lvl?_lvl.t:'—','',_lvl?('確定'+_doneMonths.length+'ヶ月合算 万垢率'+_rk[_pos].p.toFixed(1)+'%／'+_rk.length+'ジャンル中'+(_pos+1)+'位'):'確定月合算で20名以上のジャンルのみ判定',_lvl?_lvl.c:'var(--muted)')
+      +_card('万垢達成時点の投稿数（中央値）',FG.pAtMk,'投稿',FG.pAtMk!=null?('平均 '+(FG.pAtMkAvg??'—')+'投稿／全ジャンルの達成者は 中央値'+(FA.pAtMk??'—')+'・平均'+(FA.pAtMkAvg??'—')+'投稿'):'投稿数シートの投稿日が必要')
+      +_card('初投稿→万垢の日数',FG.fp2mk,'日','全体の達成者 '+(FA.fp2mk??'—')+'日')
+      +_card('初回HR→万垢の日数',FG.mk,'日','全体の達成者 '+(FA.mk??'—')+'日')
+      +'</div>'
+      +'<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:6px;">万垢達成者がたどった流れ（初回HRからの日数・中央値）</div>'
+      +'<div style="display:flex;align-items:stretch;margin-bottom:14px;overflow-x:auto;">'+_stepBox+'</div>'
+      +(FG.pAtMkList.length&&FG.n>=5?(()=>{const B=[[0,20,'〜19'],[20,30,'20〜29'],[30,40,'30〜39'],[40,50,'40〜49'],[50,70,'50〜69'],[70,1e9,'70〜']];const cnt=B.map(([a,b])=>FG.pAtMkList.filter(v=>v>=a&&v<b).length);const mx=Math.max(...cnt,1);
+        return '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:6px;">万垢を達成したときの投稿数の分布（'+FG.pAtMkList.length+'名）</div><div style="display:flex;gap:6px;align-items:flex-end;height:96px;margin-bottom:4px;">'+B.map((x,i)=>'<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;"><div style="font-size:11px;font-weight:800;color:var(--text);margin-bottom:2px;">'+cnt[i]+'</div><div style="width:100%;height:'+Math.max(cnt[i]/mx*70,cnt[i]?4:0)+'px;background:#c0762e;border-radius:4px 4px 0 0;"></div></div>').join('')+'</div><div style="display:flex;gap:6px;margin-bottom:14px;">'+B.map(x=>'<div style="flex:1;text-align:center;font-size:10.5px;color:var(--muted);">'+x[2]+'</div>').join('')+'</div>';})():'')
+      +(FP&&FP.n?(()=>{
+        const _c=(a,b,lower)=>{if(a==null||b==null)return '<span style="color:#cbd0d8;">—</span>';const d=+(a-b).toFixed(1);if(!d)return '<span style="color:var(--muted);">同じ</span>';const good=lower?d<0:d>0;return '<span style="font-weight:800;color:'+(good?'#3f8f6b':'#bb4b4b')+';">'+(d>0?'+':'')+d+'</span>';};
+        const R=[['初投稿','fp','日目',true],['1,000人','k1','日目',true],['3,000人','k3','日目',true],['5,000人','k5','日目',true],['万垢','mk','日目',true],['初投稿→万垢','fp2mk','日',true],['達成時の投稿数（中央値）','pAtMk','投稿',true],['達成時の投稿数（平均）','pAtMkAvg','投稿',true]];
+        const th='padding:8px 12px;font-size:11px;font-weight:700;color:#6c707b;border-bottom:2px solid #e7e8ec;white-space:nowrap;text-align:right;';
+        const td='padding:8px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;text-align:right;font-feature-settings:\'tnum\' 1;white-space:nowrap;';
+        return '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:4px;">過去の万垢達成者との比較（同じジャンル）</div>'
+          +'<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">今月：'+_scopeLabel+'の達成者 '+FG.n+'名／過去：'+(_pastMonths.length?_fmtGradMonth(_pastMonths[0]).replace('卒業','')+'〜'+_fmtGradMonth(_pastMonths[_pastMonths.length-1]).replace('卒業',''):'')+'卒業の達成者 '+FP.n+'名（中央値）／差は日数・投稿数が少ないほど緑</div>'
+          +'<div style="overflow-x:auto;margin-bottom:14px;"><table style="width:100%;border-collapse:collapse;min-width:520px;"><thead><tr><th style="'+th+'text-align:left;">段階</th><th style="'+th+'">今月の達成者</th><th style="'+th+'">過去の達成者</th><th style="'+th+'">差</th></tr></thead><tbody>'
+          +R.map(([lb,k,u,lo])=>'<tr><td style="'+td+'text-align:left;font-weight:600;">'+lb+'</td><td style="'+td+'font-weight:800;">'+(FG[k]!=null?FG[k]+u:'—')+'</td><td style="'+td+'">'+(FP[k]!=null?FP[k]+u:'—')+'</td><td style="'+td+'">'+_c(FG[k],FP[k],lo)+'</td></tr>').join('')
+          +'</tbody></table></div>';})():(monthSel&&basis!=='start'?'<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">過去の確定月にこのジャンルの万垢達成者がいないため、比較できません</div>':''))
+      +'<div style="font-size:12.5px;line-height:1.8;color:var(--text);background:#fbfcfd;border:1px solid var(--border);border-radius:10px;padding:12px 14px;">'+_flowText+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:8px;">対象：このジャンルの万垢達成者 '+FG.n+'名（全体の達成者 '+FA.n+'名と比較）／初回HR＝卒業予定日の180日前／達成時点の投稿数＝投稿数シートの投稿日から、各段階に到達した日までの投稿本数を数えたもの</div>'
+    : '<div style="font-size:13px;color:var(--muted);">このジャンルの万垢達成者がまだいないため、流れを算出できません</div>';
+
   const _pd=(a,b)=>{if(a==null||b==null)return'';const d=+(a-b).toFixed(1);return `<span style="color:${d>=0?'#3f8f6b':'#bb4b4b'};">全体比 ${d>=0?'+':''}${d}pt</span>`;};
 
   document.getElementById('ga-main').innerHTML=`
@@ -7577,6 +7734,7 @@ function _gaRender(){
       ${_card('1,000人以上率',G.n?(n1/G.n*100).toFixed(1):null,'%',`${n1}名`,'#3a8a85')}
       ${_card('投稿数（中央値）',_gaMed(posts),'投稿',`全体 ${_gaMed(allPosts)??'—'}投稿`)}
     </div>
+    ${_gaMode==='genre'?_sec('ジャンルの難易度と万垢までの流れ','このジャンルで万垢を達成した人が、何日目にどの段階へ到達したか（中央値）',flowHTML):''}
     ${_sec('フォロワーファネル','各段階に到達した人の割合（万垢達成者は全段階達成扱い）',funnelHTML)}
     ${_sec('卒業月別の推移','',`<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:580px;">
       <thead><tr><th style="${th}">卒業月</th><th style="${th}text-align:right;">人数</th><th style="${th}text-align:right;">万垢達成</th><th style="${th}text-align:right;">万垢率</th><th style="${th}text-align:right;">占有率</th><th style="${th}text-align:right;">投稿数中央値</th></tr></thead>
@@ -8798,7 +8956,7 @@ function processCsNumData(rawData, fields){
     }
     const fbRow=_postFollowerMap[name];
     return{_name:name,_gradYm:gradYm,_gradDate:cGrad?pd(r[cGrad]):null,_teacher:cTeacher?String(r[cTeacher]||'').trim():'',
-      _class:cClass?String(r[cClass]||'').trim():'',_course:cCourse?String(r[cCourse]||'').trim():'',
+      _class:cClass?String(r[cClass]||'').trim():'',_course:cCourse?_normCourse(r[cCourse]):'',
       _enrollDate:cEnroll?pd(r[cEnroll]):null,_todayFollower:cFollower?_num(r[cFollower]):null,
       _postCount:cPosts?_num(r[cPosts]):null,
       _start:start,_account:account,_declare:declare,_firstPost:firstPost,
@@ -8808,6 +8966,29 @@ function processCsNumData(rawData, fields){
       _igUrl:igUrl||(fbRow&&fbRow._igUrl)||'',_igUser:igUser||(fbRow&&fbRow._igUser)||'',
       _genre:(cGenre?String(r[cGenre]||'').trim():'')||(fbRow&&fbRow._genre)||''};
   }).filter(Boolean);
+  _applyGradCutoff(csNumRows);
+}
+
+// 万垢達成は「卒業日時点（受講期間内）」で判定する。
+// 卒業日より後の達成は _f10000/_mankuForm から外し、元の値は _f10000All/_mankuFormAll に残す（卒業後の万垢率用）
+function _applyGradCutoff(rows){
+  (rows||[]).forEach(r=>{
+    r._f10000All=r._f10000; r._mankuFormAll=r._mankuForm; r._f5000All=r._f5000; r._f3000All=r._f3000; r._f1000All=r._f1000; r._f100All=r._f100;
+    const g=(r._gradDate instanceof Date&&!isNaN(r._gradDate))?r._gradDate:null;
+    if(!g)return;
+    const end=new Date(g.getFullYear(),g.getMonth(),g.getDate(),23,59,59);
+    const cut=v=>{if(!v)return v;const d=(v instanceof Date)?v:new Date(v);return (!isNaN(d)&&d>end)?null:v;};
+    r._f10000=cut(r._f10000); r._mankuForm=cut(r._mankuForm);
+    r._f5000=cut(r._f5000); r._f3000=cut(r._f3000); r._f1000=cut(r._f1000); r._f100=cut(r._f100);
+    r._gradEnd=end;
+  });
+}
+// 卒業後の万垢率（卒業日以降に達成した人も含めた現時点の達成者）
+function _postGradManku(ym){
+  const rs=(typeof csNumRows!=='undefined'?csNumRows:[]).filter(r=>r._gradYm===ym);
+  const within=rs.filter(r=>r._f10000||r._mankuForm).length;
+  const all=rs.filter(r=>r._f10000All||r._mankuFormAll).length;
+  return {n:rs.length,within,all,after:all-within};
 }
 
 // スプレッドシート内の全タブ名を取得し、「20XX年X月卒業生」パターンに一致するものだけを返す
@@ -8913,7 +9094,24 @@ function _funnelAttrDim(key){
       return (va&&vb)?(va+' × '+vb):'';
     };
   }
-  if(key==='職業')return r=>_attrOf(r)._job;
+  if(key==='流入元'){
+    // 広告／非広告：プログラムシート（新投稿プログラム・投稿プログラム②・旧）のアポインター判定
+    if(!window._adByName){const m={};const nk=s=>String(s||'').replace(/[\s　]/g,'').replace(/[（(].*?[）)]/g,'');
+      [...(typeof post2026AllRows!=='undefined'?post2026AllRows:[]),...(typeof nppAllRows!=='undefined'?nppAllRows:[]),...(typeof allRows!=='undefined'?allRows:[])].forEach(x=>{const k=nk(x._name);if(k&&x._isAd!=null&&!(k in m))m[k]=x._isAd;});
+      window._adByName=m;}
+    return r=>{const k=String(r._name||'').replace(/[\s　]/g,'').replace(/[（(].*?[）)]/g,'');const v=window._adByName[k];return v==null?'':(v?'広告':'非広告');};
+  }
+  if(key==='職業')return r=>{
+    // 職業は5区分にまとめる（細かい職業名が多くて見づらいため）
+    const j=String(_attrOf(r)._job||'').trim();if(!j)return '';
+    if(/会社員|正社員|契約|派遣|公務員|教員|看護|医療|介護|保育/.test(j))return '会社員・公務員';
+    if(/パート|アルバイト/.test(j))return 'パート・アルバイト';
+    if(/主婦|主夫|専業/.test(j))return '主婦・主夫';
+    if(/無職|育休|休職/.test(j))return '無職';
+    if(/経営|役員|自営|個人事業|フリー|起業|代表/.test(j))return '経営者・自営業';
+    if(/学生/.test(j))return '学生';
+    return 'その他';
+  };
   if(key==='年代')return r=>_attrOf(r)._ageBand;
   if(key==='地域')return r=>_attrOf(r)._region;
   if(key==='性別')return r=>_attrOf(r)._gender;
@@ -9311,6 +9509,12 @@ function _buildCsNumFunnel(gradYM){
           <option value="コース×職業">コース×職業</option>
           <option value="コース×地域">コース×地域</option>
           <option value="年代×職業">年代×職業</option>
+          <option value="流入元">広告 vs 非広告</option>
+          <option value="流入元×年代">広告 vs 非広告 × 年代</option>
+          <option value="流入元×職業">広告 vs 非広告 × 職業</option>
+          <option value="流入元×コース">広告 vs 非広告 × コース</option>
+          <option value="流入元×性別">広告 vs 非広告 × 性別</option>
+          <option value="流入元×地域">広告 vs 非広告 × 地域</option>
         </select>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">生徒情報シートより／性別・地域は氏名・住所からの推定値／該当者が1名以上の属性を表示</div>
@@ -14124,7 +14328,7 @@ function processPost2026Data(raw,fields,fname){
     const in50=(start&&step18d)?(db(start,step18d)<=50):false;
     return{
       _name:name,
-      _course:(courseCol?String(r[courseCol]||'').trim():''),
+      _course:(courseCol?_normCourse(r[courseCol]):''),
       _mg:(mgCol?String(r[mgCol]||'').trim():''),
       _className:(classCol?String(r[classCol]||'').trim():''),
       _appointer:(appointerCol?String(r[appointerCol]||'').trim():''),
@@ -14265,7 +14469,7 @@ function processNewPPData(raw,fields,fname){
       _appointer:_appointer,_isAd:_isAd,
       _fs:fs,_stag:stag,_tsuz:tsuzumari,_status:status,
       _ym:ym(startDate),_enrollYm,_name:name,_isOutlier:false,
-      _course:_course,_className:_className,_mg:_mg,
+      _course:_normCourse(_course),_className:_className,_mg:_mg,
       _availSteps:availNppSteps};
   });
   _markNppDupWithPP2();
