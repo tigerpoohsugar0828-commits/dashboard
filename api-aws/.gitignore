@@ -1,0 +1,7 @@
+# デプロイ時に生成されるもの・秘密情報はコミットしない
+.aws-sam/
+samconfig.toml
+node_modules/
+.env
+*.local.json
+.DS_Store

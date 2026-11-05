@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: KPIダッシュボード API（Lambda 関数URL ＋ S3）
+
+Parameters:
+  ReadToken:
+    Type: String
+    NoEcho: true
+    Description: 読み取り用の合言葉（Claude・Notion・同僚に渡す）
+  WriteToken:
+    Type: String
+    NoEcho: true
+    Description: 書き込み用の合言葉（ダッシュボードにだけ入れる）
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: ダッシュボードの公開URL（例 https://xxxx.netlify.app）。分からなければ * のまま
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireHistory
+            Status: Enabled
+            Prefix: history/
+            ExpirationInDays: 400
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs20.x
+      Handler: index.handler
+      CodeUri: .
+      MemorySize: 512
+      Timeout: 15
+      Environment:
+        Variables:
+          BUCKET: !Ref DataBucket
+          READ_TOKEN: !Ref ReadToken
+          WRITE_TOKEN: !Ref WriteToken
+      Policies:
+        - S3CrudPolicy: { BucketName: !Ref DataBucket }
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin]
+          AllowMethods: [GET, POST]
+          AllowHeaders: [content-type]
+
+Outputs:
+  ApiUrl:
+    Description: ダッシュボードの「API連携」に入れるURL
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl

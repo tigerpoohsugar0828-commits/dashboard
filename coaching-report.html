@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>週次レポート（コーチング）</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1d1f29;--muted:#6c707b;--line:#e3e6eb;--navy:#223049;--red:#c0453f;--blue:#3f6aa8}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{margin:0;background:#fff;font-family:'Noto Sans JP','Segoe UI',system-ui,sans-serif;color:var(--ink);font-size:15px;line-height:1.75;font-feature-settings:"palt" 1}
+a{color:var(--navy)}a:hover{color:var(--blue)}
+.tool{position:sticky;top:0;z-index:10;background:#f7f7f5;border-bottom:1px solid var(--line);padding:10px 20px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tool select{padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:#fff}
+.btn{border:none;border-radius:6px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn.p{background:var(--navy);color:#fff}.btn.s{background:#fff;color:var(--navy);border:1px solid #c9ccd3}
+.page{max-width:920px;margin:0 auto;padding:36px 44px 100px}
+h1{font-size:30px;font-weight:900;margin:0 0 6px}
+.lead{color:var(--muted);font-size:13px;margin:0 0 22px}
+h2{font-size:22px;font-weight:800;margin:36px 0 10px;padding-left:11px;border-left:4px solid var(--navy)}
+h3{font-size:16px;font-weight:800;margin:20px 0 6px}
+p{margin:3px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:10px 0 14px}
+.card{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card .lb{font-size:12px;font-weight:700;color:var(--muted)}
+.card .v{font-size:32px;font-weight:900;line-height:1.2}
+.card .s{font-size:12.5px;color:var(--muted)}
+.bar{height:10px;background:#eef0f3;border-radius:5px;overflow:hidden;margin-top:8px;position:relative}
+.bar>i{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+.bar>b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}
+.badge{display:inline-block;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:800;color:#fff;white-space:nowrap}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 14px}
+th{text-align:left;font-size:11px;color:var(--muted);font-weight:700;padding:7px 10px;border-bottom:2px solid var(--line);white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid #f0f2f5;font-feature-settings:'tnum' 1}
+td.n,th.n{text-align:right}
+details>summary{cursor:pointer;font-weight:800;font-size:15px;margin:10px 0 4px}
+.note{color:var(--muted);font-size:12px}
+.empty{padding:60px 20px;text-align:center;color:var(--muted)}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:700;display:none}
+@media print{.tool,#toast{display:none!important}.page{padding:0}details{display:block}details>summary{list-style:none}}
+/* 開始月の分析：区切ごとに大きく表示 */
+.det{zoom:1.18;border:1px solid var(--line,#e3e6eb);border-radius:12px;padding:14px 16px;margin:0 0 14px;background:#fff;break-inside:avoid}
+.det>*{max-width:100%}
+</style>
+</head>
+<body>
+<div class="tool">
+  <strong style="font-size:14px;">週次レポート（コーチング）</strong>
+  <select id="date" onchange="go()"></select>
+  <button class="btn p" onclick="copyMd()">Notion用にコピー</button>
+  <button class="btn s" onclick="window.print()">PDFで出力</button>
+  <span class="note" style="flex-basis:100%;">KPIダッシュボードを開くたびに、その日の数字が記録されます（同じブラウザで開いてください）</span>
+</div>
+<div class="page" id="page"></div>
+<div id="toast"></div>
+<script>
+const LS='coaching_report_data_v1';
+const load=()=>{try{return JSON.parse(localStorage.getItem(LS)||'{}')}catch(e){return {}}};
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const mo=ym=>+ym.split('/')[1];
+let CUR=null,PREV=null,MD=[];
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2400)}
+function prevItem(ym,d,k){const m=PREV&&PREV.months.find(x=>x.ym===ym);if(!m)return null;for(const g of m.kpis)if(g.d===d){const it=g.items.find(i=>i.k===k);if(it)return it;}return null;}
+function card(m,g,it){
+  const ok=it.pct!=null&&it.pct>=it.target,inProg=!g.reached;
+  const need=it.dn?Math.max(0,Math.ceil(it.dn*it.target/100)-it.n):0;
+  const pv=prevItem(m.ym,g.d,it.k),dv=pv&&pv.pct!=null&&it.pct!=null?+(it.pct-pv.pct).toFixed(1):null;
+  const col=ok?'var(--red)':'var(--blue)';
+  const badge=ok?'<span class="badge" style="background:var(--red)">✓ 達成</span>':(inProg?`<span class="badge" style="background:#a8792b">進行中・あと${need}名</span>`:`<span class="badge" style="background:var(--blue)">× 未達・あと${need}名</span>`);
+  MD.push(`- **${it.label}**（${g.d}日時点・目標${it.target}%${it.provisional?'・暫定':''}）：**${it.pct??'—'}%**（${it.n}/${it.dn}名）${ok?'✅ 達成':(inProg?`進行中・あと${need}名`:`❌ 未達・あと${need}名`)}${dv!=null?`／先週比 ${dv>0?'+':''}${dv}pt`:''}`);
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;"><div class="lb">${g.d}日時点：${esc(it.label)}<br>目標 ${it.target}%${it.provisional?'（暫定）':''}</div>${badge}</div>
+    <div class="v" style="color:${col}">${it.pct??'—'}<span style="font-size:16px;">%</span></div>
+    <div class="s">${it.n} / ${it.dn}名${it.cov!=null&&it.cov<it.dn?`<span style="color:#a8792b;">（投稿データ有り ${it.cov}/${it.dn}名・無い人は未達で集計）</span>`:''}${dv!=null?`　先週比 <strong style="color:${dv>=0?'var(--red)':'var(--blue)'}">${dv>0?'+':''}${dv}pt</strong>`:''}</div>
+    <div class="bar"><i style="width:${Math.min(100,it.pct||0)}%;background:${col}"></i><b style="left:${Math.min(100,it.target)}%"></b></div></div>`;
+}
+function build(){
+  MD=[];const at=new Date(CUR.at);
+  // 180日を過ぎて結果が確定した開始月（経過190日超）は載せない。180日の区切りを含む月は180日時点だけを見る
+  const MS=CUR.months.filter(m=>m.elapsed<=190).map(m=>{const f=m.kpis.find(g=>g.d===180);return f?{...m,kpis:[f]}:m;});
+  const title=`${String(at.getFullYear()).slice(2)}年${at.getMonth()+1}月${Math.ceil(at.getDate()/7)}週目_コーチング週次`;
+  MD.push(`# ${title}`,'');
+  let h=`<h1>${title}</h1><p class="lead">対象：特進・コミット（コーチング付き）の開始月ごと／KGI＝180日時点の35投稿達成率${PREV?`／先週（${new Date(PREV.at).getMonth()+1}/${new Date(PREV.at).getDate()}）と比較`:''}</p>`;
+  // サマリー
+  const rows=MS.map(m=>{const g=m.kpis.find(x=>x.reached)||m.kpis[0];const its=g.items;const ok=its.filter(i=>i.pct!=null&&i.pct>=i.target).length;return {m,g,ok,tot:its.length};});
+  h+=`<h2>今週のまとめ</h2><table><thead><tr><th>開始月</th><th class="n">人数</th><th class="n">経過日数</th><th>今の区切り</th><th>達成状況</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${mo(r.m.ym)}月開始</strong></td><td class="n">${r.m.n}名</td><td class="n">${r.m.elapsed}日</td><td>${r.g.d}日時点</td><td><strong style="color:${r.ok===r.tot?'var(--red)':'var(--blue)'}">${r.ok}/${r.tot}項目 達成</strong></td></tr>`).join('')}</tbody></table>`;
+  MD.push('## 今週のまとめ','','| 開始月 | 人数 | 経過日数 | 今の区切り | 達成状況 |','|---|---:|---:|---|---|',...rows.map(r=>`| ${mo(r.m.ym)}月開始 | ${r.m.n}名 | ${r.m.elapsed}日 | ${r.g.d}日時点 | ${r.ok}/${r.tot}項目 達成 |`),'');
+  MS.forEach(m=>{
+    h+=`<h2>${mo(m.ym)}月開始（${m.n}名・経過${m.elapsed}日）</h2>`;MD.push(`## ${mo(m.ym)}月開始（${m.n}名・経過${m.elapsed}日）`,'');
+    m.kpis.forEach(g=>{h+=`<h3>${g.d}日時点${g.reached?'':'（次の区切り・進行中）'}</h3><div class="cards">${g.items.map(it=>card(m,g,it)).join('')}</div>`;});
+    // 月の分析（ダッシュボードの「開始月の分析」と同じ内容を、区切ごとに大きく表示）
+    if(m.detail){
+      const d=document.createElement('div');d.innerHTML=m.detail;
+      d.querySelectorAll('details').forEach(x=>x.open=true);
+      const blocks=[...d.children].filter(x=>x.textContent.trim());
+      h+=`<h3>${mo(m.ym)}月開始の分析</h3>`+blocks.map(b=>`<div class="det">${b.outerHTML}</div>`).join('');
+      blocks.forEach(b=>{const t=b.textContent.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim();if(t)MD.push(t,'');});
+    }
+    MD.push('');
+    if(m.behind&&m.behind.list.length){
+      const L=m.behind.list;MD.push(`**${m.behind.label}に届いていない生徒：${L.length}名**`,'','| 生徒 | 担当MG | 投稿数 | プログラム |','|---|---|---:|---|',...L.map(s=>`| ${s.name} | ${s.mg||'—'} | ${s.posts} | ${s.done?'完了':'未完了'} |`),'');
+      h+=`<details><summary>${esc(m.behind.label)}に届いていない生徒：${L.length}名（投稿数の多い順）</summary><table><thead><tr><th>生徒</th><th>担当MG</th><th>コース</th><th class="n">投稿数</th><th>プログラム</th></tr></thead><tbody>${L.map(s=>`<tr><td><strong>${esc(s.name)}</strong></td><td>${esc(s.mg||'—')}</td><td>${esc(String(s.course).replace(/講座_|コース/g,''))}</td><td class="n">${s.posts}</td><td>${s.done?'<span style="color:var(--red);font-weight:700">完了</span>':'<span style="color:var(--blue);font-weight:700">未完了</span>'}</td></tr>`).join('')}</tbody></table></details>`;
+    }
+    if(m.byMg&&m.byMg.length){
+      const av=m.byMg.reduce((s,x)=>s+x.doneRate*x.n,0)/m.n;
+      h+=`<details><summary>担当MG別</summary><table><thead><tr><th>担当MG</th><th class="n">担当人数</th><th class="n">プログラム完了</th><th class="n">完了率</th><th class="n">投稿数中央値</th></tr></thead><tbody>${m.byMg.map(x=>`<tr><td><strong>${esc(x.k)}</strong></td><td class="n">${x.n}名</td><td class="n">${x.done}名</td><td class="n"><strong style="color:${x.doneRate>=av?'var(--red)':'var(--blue)'}">${x.doneRate}%</strong></td><td class="n">${x.postMed}</td></tr>`).join('')}</tbody></table><p class="note">完了率：赤＝この開始月の平均（${av.toFixed(1)}%）以上、青＝平均未満</p></details>`;
+      MD.push('**担当MG別**','','| 担当MG | 担当人数 | 完了率 | 投稿数中央値 |','|---|---:|---:|---:|',...m.byMg.map(x=>`| ${x.k} | ${x.n}名 | ${x.doneRate}% | ${x.postMed} |`),'');
+    }
+  });
+  h+=`<p class="note" style="margin-top:24px;">投稿数は投稿数シートの投稿日で、その区切りの日まで（進行中の区切りは今日まで）の累計。プログラム完了は新投稿プログラム＝STEP18、②＝STEP18-2、旧＝PP Step9の完了日。</p>`;
+  return h;
+}
+function go(){const all=load(),ks=Object.keys(all).sort();const k=document.getElementById('date').value;CUR=all[k]||null;
+  const pk=ks.filter(x=>x<k&&(new Date(k)-new Date(x))>=5*864e5).pop();PREV=pk?all[pk]:null;
+  document.getElementById('page').innerHTML=CUR?build():'<div class="empty">記録がありません。KPIダッシュボードを開いて1分ほど待ってから、このページを開き直してください。</div>';}
+async function copyMd(){if(!CUR)return;try{await navigator.clipboard.writeText(MD.join('\n'));toast('コピーしました。Notionに貼り付けてください')}catch(e){toast('コピーできませんでした')}}
+(function(){const all=load(),ks=Object.keys(all).sort().reverse();const s=document.getElementById('date');
+  s.innerHTML=ks.length?ks.map(k=>`<option value="${k}">${k.replace(/-/g,'/')}</option>`).join(''):'<option value="">記録なし</option>';go();})();
+</script>
+</body>
+</html>

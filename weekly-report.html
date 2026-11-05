@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>週次レポート</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1d1f29;--muted:#6c707b;--line:#e3e6eb;--navy:#223049}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{margin:0;background:#fff;font-family:'Noto Sans JP','Segoe UI',system-ui,sans-serif;color:var(--ink);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased;font-feature-settings:"palt" 1;letter-spacing:.01em}
+a{color:var(--navy)}a:hover{color:#3f6aa8}
+.tool{position:sticky;top:0;z-index:10;background:#f7f7f5;border-bottom:1px solid var(--line);padding:10px 20px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tool select{padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:#fff}
+.btn{border:none;border-radius:6px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn.p{background:var(--navy);color:#fff}.btn.s{background:#fff;color:var(--navy);border:1px solid #c9ccd3}
+.tool .hint{font-size:12px;color:var(--muted);flex-basis:100%}
+.page{max-width:900px;margin:0 auto;padding:40px 48px 120px}
+h1{font-size:30px;font-weight:900;margin:0 0 18px;letter-spacing:-.01em}
+.props{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:14px;margin-bottom:28px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.props dt{color:var(--muted)}.props dd{margin:0}
+.chip{display:inline-block;background:#e3e2e0;border-radius:4px;padding:0 7px;font-size:13px;white-space:nowrap}
+h2{font-size:22px;font-weight:800;margin:40px 0 10px;padding-left:11px;border-left:4px solid var(--navy)}
+h3{font-size:17px;font-weight:800;margin:26px 0 6px}
+p{margin:3px 0}
+.arrow{font-weight:700}
+.note{color:var(--muted);font-size:14px}
+.img{margin:10px 0 6px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.img iframe{width:100%;border:0;display:block;height:200px}
+.cp{display:none}
+.cp:hover{color:var(--navy)}
+table{border-collapse:collapse;font-size:13px;margin:8px 0 14px}
+th,td{border-bottom:1px solid var(--line);padding:8px 12px;text-align:left}
+th{font-size:11px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);white-space:nowrap}
+td.n{text-align:right;font-feature-settings:'tnum' 1}
+table{width:100%}td,th{word-break:keep-all}td.n,th.n{white-space:nowrap}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);border-radius:0 8px 8px 0;padding:12px 16px;margin:10px 0;background:#fafbfc}.box p{margin:3px 0}
+.callout{background:#f7f6f3;border-radius:6px;padding:12px 16px;margin:10px 0;display:flex;gap:10px}
+textarea{width:100%;min-height:70px;border:1px dashed #cfd3da;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;line-height:1.7;resize:vertical;color:var(--ink)}
+textarea:focus{outline:none;border-style:solid;border-color:#9aa0ab}
+.empty{padding:60px 20px;text-align:center;color:var(--muted)}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:700;display:none;z-index:20}
+@media print{.tool,.cp,#toast{display:none!important}.page{padding:0}textarea{border:none;padding:0;min-height:0}h2{break-before:auto}}
+</style>
+</head>
+<body>
+<div class="tool">
+  <strong style="font-size:14px;">週次レポート</strong>
+  <select id="date" onchange="go()"></select>
+  <button class="btn p" onclick="exportZip()">Notion用に書き出し（画像込み）</button>
+  <button class="btn s" onclick="copyText()">文章だけコピー</button>
+  <button class="btn s" onclick="window.print()">PDFで出力</button>
+  <div class="hint">「Notion用に書き出し」で保存されたZIPを、Notionの「インポート → テキストとMarkdown」で取り込むと、このページが画像込みでそのまま作られます。KPIダッシュボードを開くたびにその日の画面が記録されます（同じブラウザで開いてください）。</div>
+</div>
+<div class="page" id="page"></div>
+<div id="toast"></div>
+<script>
+const LS='weekly_report_data_v1', NOTE='weekly_report_note_v3';
+const load=k=>{try{return JSON.parse(localStorage.getItem(k)||'{}')}catch(e){return {}}};
+const pc=(a,b)=>b?+(a/b*100).toFixed(1):0;
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const mo=ym=>+ym.split('/')[1];
+const md=d=>`${d.getMonth()+1}/${d.getDate()}`;
+const PHASE_POSTS={phase2:22,phase3:31,phase4:38,grad:43};
+let CUR=null,PREV=null,KEY=null,SHOTS=null,PSHOTS=null,IMGS=[];
+function note(id){const a=load(NOTE);return ((a[KEY]||{})[id])||''}
+function setNote(id,v){const a=load(NOTE);a[KEY]=a[KEY]||{};a[KEY][id]=v;localStorage.setItem(NOTE,JSON.stringify(a))}
+function _idb(){return new Promise((res,rej)=>{const q=indexedDB.open('weekly_report_v1',1);q.onupgradeneeded=()=>q.result.createObjectStore('shots');q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function loadShots(key){try{const db=await _idb();return await new Promise(r=>{const q=db.transaction('shots').objectStore('shots').get(key);q.onsuccess=()=>r(q.result||null);q.onerror=()=>r(null);});}catch(e){return null;}}
+// ── ダッシュボードの画面をそのまま表示 ──
+function shot(h,name){
+  if(!h)return `<p class="note">（この画面は記録されていません。KPIダッシュボードを開いてから再読み込みしてください）</p>`;
+  const i=IMGS.push({name,html:h})-1;
+  return `<div class="img"><iframe id="f${i}" title="${esc(name)}"></iframe></div><button class="cp" onclick="copyImg(${i})">↑ 画像としてコピー</button>`;
+}
+function frameDoc(h){return `<!DOCTYPE html><html><head><meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet"><style>${(SHOTS&&SHOTS.css)||''}</style><style>html,body{margin:0;padding:0;background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}body{padding:6px!important}[onclick]{pointer-events:none}#app-sidebar{display:none}.grad-top-grid{grid-template-columns:1fr!important}.grad-top-grid>*:not(:first-child){display:none!important}[data-wr="attr"]{display:none!important}</style></head><body>${h}</body></html>`}
+function fit(f){try{const d=f.contentDocument;f.style.height=(Math.max(d.body.scrollHeight,d.documentElement.scrollHeight)+6)+'px'}catch(e){}}
+function mount(){IMGS.forEach((x,i)=>{const f=document.getElementById('f'+i);if(!f)return;f.onload=()=>{fit(f);setTimeout(()=>fit(f),700);setTimeout(()=>fit(f),1800)};f.srcdoc=frameDoc(x.html)})}
+function _h2c(){return window.html2canvas?Promise.resolve():new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+// 画像にする：閉じたトグルの中の画面は大きさが0で描けないため、書き出しの間だけ親のトグルを開いて描く
+async function toPng(i){await _h2c();const f=document.getElementById('f'+i);if(!f)return null;
+  const opened=[];for(let p=f.parentElement;p;p=p.parentElement){if(p.tagName==='DETAILS'&&!p.open){p.open=true;opened.push(p);}}
+  try{
+    if(opened.length){if(!f.dataset.m&&f.srcdoc==='')f.srcdoc=frameDoc(IMGS[i].html);await new Promise(r=>setTimeout(r,400));fit(f);await new Promise(r=>setTimeout(r,150));}
+    const c=await html2canvas(f.contentDocument.body,{backgroundColor:'#ffffff',scale:2,logging:false});
+    if(!c.width||!c.height)return null;
+    return await new Promise(r=>c.toBlob(r,'image/png'));
+  }finally{opened.forEach(p=>p.open=false);}
+}
+async function copyImg(i){try{const b=await toPng(i);await navigator.clipboard.write([new ClipboardItem({'image/png':b})]);toast('画像をコピーしました')}catch(e){toast('コピーできませんでした')}}
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2400)}
+// ── 分析文（良かった点／良くない点）──
+function stages(c){return [['fp','初投稿','全員（対象者）'],['r100','100人','初投稿'],['r1','1,000人','100人'],['r3','3,000人','1,000人'],['r5','5,000人','3,000人'],['mk','万垢','5,000人']]}
+const BK={fp:'初投稿完了日',r100:'100フォロワー達成日',r1:'1000フォロワー達成日',r3:'3000フォロワー達成日',r5:'5000フォロワー達成日',mk:'万垢達成'};
+// ── ① KGI・KPIの進捗 ──
+function progressTbl(c){
+  const tg=c.targets,N=c.n;const R=[];
+  const row=(lb,k,t,isK)=>{if(t==null)return;const cur=c.cur[k],prv=c.prev?c.prev[k]:null,p=pc(cur,N),need=Math.max(0,Math.ceil(N*t/100)-cur),ok=p>=t,d=prv!=null?cur-prv:null;
+    R.push(`<tr><td>${isK?'<strong>KGI</strong> ':'KPI '}${lb}</td><td class="n">${t}%</td><td class="n"><strong>${p}%</strong>（${cur}/${N}名）</td><td class="n">${d==null?'—':`<strong style="color:${d>0?'#c0453f':'#6c707b'};">${d>0?'+':''}${d}名</strong>`}</td><td class="n"><strong style="color:${ok?'#c0453f':'#3f6aa8'};">${ok?'達成':'未達'}</strong></td><td class="n">${ok?'—':`あと<strong>${need}</strong>名`}</td></tr>`);};
+  const isGrad=c.phase==='grad';
+  row(isGrad?'万垢率':'万垢率（今月の目標）','mk',tg.mk,isGrad);
+  if(!isGrad&&c.finalKgi!=null&&c.finalKgi!==tg.mk)row('万垢率（卒業時の最終目標）','mk',c.finalKgi,true);
+  row('5,000人以上率','r5',tg.r5);row('3,000人以上率','r3',tg.r3);row('1,000人以上率','r1',tg.r1);
+  return `<table><thead><tr><th>指標</th><th class="n">目標</th><th class="n">現在</th><th class="n">先週比</th><th class="n">判定</th><th class="n">達成まで</th></tr></thead><tbody>${R.join('')}</tbody></table>`;
+}
+// ── ② なぜ達成していないか（フォロワー・投稿数のファネル）──
+function diagHtml(c,S,m){
+  const bench=CUR.bench||{};const L=[['fp','初投稿','全員（対象者）'],['r100','100人','初投稿'],['r1','1,000人','100人'],['r3','3,000人','1,000人'],['r5','5,000人','3,000人'],['mk','万垢','5,000人']];
+  let prev=c.n;const rows=L.map(([k,lb,pl])=>{const v=prev?+(c.cur[k]/prev*100).toFixed(1):null;const b=bench[BK[k]];const ref=b?(k==='fp'?b.abs:b.rel):null;const g=v!=null&&ref!=null?+(v-ref).toFixed(1):null;const o={k,lb,pl,v,ref,g,n:c.cur[k],from:prev};prev=c.cur[k];return o;});
+  const worst=rows.filter(x=>x.g!=null&&x.g<0).sort((a,b)=>a.g-b.g).slice(0,2);const wk=new Set(worst.map(x=>x.k));
+  const tb=`<table><thead><tr><th>段階</th><th class="n">到達</th><th class="n">通過率</th><th class="n">目安</th><th class="n">差</th></tr></thead><tbody>${rows.map(x=>`<tr${wk.has(x.k)?' style="background:#eef3fb;"':''}><td>${wk.has(x.k)?'<strong style="color:#3f6aa8;">▼ ':''}${x.pl}→${x.lb}${wk.has(x.k)?'</strong>':''}</td><td class="n">${x.n}名</td><td class="n"><strong>${x.v??'—'}%</strong></td><td class="n">${x.ref??'—'}%</td><td class="n">${x.g==null?'—':`<strong style="color:${x.g>=0?'#c0453f':'#3f6aa8'};">${x.g>0?'+':''}${x.g}pt</strong>`}</td></tr>`).join('')}</tbody></table>`;
+  // 投稿数：この時期の万垢達成者の中央値と比べる
+  const MK={phase2:16,phase3:25,phase4:34,grad:42}[c.phase];const lag=MK!=null&&c.postMed!=null?MK-c.postMed:null;
+  const F=c.fwAtPost||{};const fw=[10,20,30].filter(N=>F[N]&&F[N].n>=5&&F[N].past).map(N=>({N,r:Math.round(F[N].cur/F[N].past*100)}));
+  const growBad=fw.length&&fw.filter(x=>x.r<85).length>=Math.ceil(fw.length/2),postBad=lag!=null&&lag>=5;
+  const ptb=`<table><thead><tr><th>投稿の見方</th><th class="n">この月</th><th class="n">比べる値</th><th class="n">判定</th></tr></thead><tbody>
+    <tr><td>投稿数の中央値</td><td class="n"><strong>${c.postMed??'—'}投稿</strong></td><td class="n">万垢達成者の同時期 ${MK??'—'}投稿</td><td class="n">${lag==null?'—':`<strong style="color:${postBad?'#3f6aa8':'#c0453f'};">${postBad?lag+'投稿不足':'足りている'}</strong>`}</td></tr>
+    ${fw.map(x=>`<tr><td>${x.N}投稿目時点のフォロワー</td><td class="n"><strong>${F[x.N].cur.toLocaleString()}人</strong></td><td class="n">過去の全員 ${F[x.N].past.toLocaleString()}人</td><td class="n"><strong style="color:${x.r>=100?'#c0453f':(x.r<85?'#3f6aa8':'inherit')};">${x.r}%</strong></td></tr>`).join('')}</tbody></table>`;
+  const v=postBad&&growBad?'投稿の量も、投稿あたりの伸びも足りていない':(postBad?'投稿の量が足りていない（同じ投稿数での伸びは過去並み）':(growBad?'投稿あたりの伸びが足りていない（投稿の量は足りている）':'投稿の量・伸びとも過去並み'));
+  const all=progressOk(c);
+  // 止まっている段階で、どの属性の生徒が止まっているか
+  const stuckHtml=worst.map(w=>stuckAttr(c,w)).join('');
+  return `<h3>${all?'目標の進み具合':'なぜ達成していないか'}（ファネル）</h3>
+    <div class="box"><p><strong>フォロワーで止まっている段階：</strong>${worst.length?worst.map(x=>`<strong style="color:#3f6aa8;">${x.pl}→${x.lb}</strong>（通過率${x.v}%／目安${x.ref}%）`).join('、'):'目安を下回る段階なし'}</p>
+    <p><strong>投稿から見た原因：</strong><strong style="color:#3f6aa8;">${v}</strong></p></div>
+    <p><strong>フォロワーファネル</strong></p>${tb}${shot(noExtra(S.funnel),m+'月卒業生_フォロワーファネル')}${stuckHtml}
+    <p><strong>投稿数ファネル</strong></p>${ptb}${shot(noExtra(S.funnelPost),m+'月卒業生_投稿数ファネル')}${postAttr(c,MK)}`;
+}
+function progressOk(c){const tg=c.targets;return ['mk','r5','r3','r1'].every(k=>tg[k]==null||pc(c.cur[k],c.n)>=tg[k]);}
+// ファネルの画像から、万垢率・投稿頻度・投稿数ベースの到達率などの付録を外す
+function noExtra(h){if(!h||h.indexOf('funnelExtra')<0)return h;const t=document.createElement('template');t.innerHTML=h;t.content.querySelectorAll('[data-wr="funnelExtra"]').forEach(e=>e.remove());const d=document.createElement('div');d.appendChild(t.content);return d.innerHTML;}
+// 投稿数が少ない属性：この時期の目安（万垢達成者の同時期の投稿数）に届いている割合を属性ごとに比べる
+function postAttr(c,MK){
+  const T=c.tiers;if(!T)return '';const th=MK||10;
+  const rows=Object.values(T).flat().filter(r=>r[3]!=null);const N=rows.length;if(N<20)return '';
+  const ok=r=>r[3]>=th,K=rows.filter(ok).length;
+  const nf=z=>{const t=1/(1+0.2316419*Math.abs(z));const d=0.3989423*Math.exp(-z*z/2);const pr=1-d*t*(1.330274*t**4-1.821256*t**3+1.781478*t*t-0.356538*t+0.319381);return z>0?pr:1-pr;};
+  const med=a=>{const s=a.slice().sort((x,y)=>x-y);return s.length?s[Math.floor(s.length/2)]:null;};
+  const F={'年代':r=>r[12],'職業':r=>r[13],'コース':r=>r[5],'ジャンル':r=>r[6]};const out=[];
+  Object.entries(F).forEach(([lb,f])=>{const g={};rows.forEach(r=>{const v=f(r);if(!v||/^（|その他|未設定/.test(v))return;(g[v]=g[v]||[]).push(r);});
+    Object.entries(g).forEach(([v,L])=>{if(L.length<8)return;const n2=N-L.length;if(n2<8)return;const k1=L.filter(ok).length,k2=K-k1,p1=k1/L.length,p2=k2/n2,pp=K/N,se=Math.sqrt(pp*(1-pp)*(1/L.length+1/n2));const p=se?+(2*(1-nf(Math.abs((p1-p2)/se)))).toFixed(4):1;
+      out.push({lb,v,n:L.length,med:med(L.map(r=>r[3])),rate:+(p1*100).toFixed(1),other:+(p2*100).toFixed(1),diff:+((p1-p2)*100).toFixed(1),p});});});
+  const low=out.filter(x=>x.diff<0).sort((a,b)=>a.p-b.p||a.diff-b.diff);const sig=low.filter(x=>x.p<0.1),show=(sig.length?sig:low).slice(0,6);if(!show.length)return '';
+  const base=+(K/N*100).toFixed(1);const pf=p=>p<0.1?`<strong>★${p<0.001?'&lt;0.001':p}</strong>`:String(p);
+  const sum=sig.length?`投稿数が少ないのは${sig.slice(0,3).map(x=>`<strong>${esc(x.lb)}「${esc(x.v)}」</strong>（目安達成${x.rate}%・中央値${x.med}投稿）`).join('、')}。全体（${base}%）より有意に低い。`:`全体（${base}%）より有意に投稿数が少ない属性はない。下は差の大きい順の参考。`;
+  return `<p style="margin-top:14px;"><strong>▼ 投稿数が少ない属性</strong>（この時期の目安${th}投稿以上の人＝全体${base}%）</p><div class="box"><p>${sum}</p></div>
+    <table><thead><tr><th>属性</th><th>区分</th><th class="n">対象</th><th class="n">投稿数の中央値</th><th class="n">目安以上の割合</th><th class="n">その他の生徒</th><th class="n">差</th><th class="n">p値</th></tr></thead><tbody>${show.map(x=>`<tr><td>${x.lb}</td><td><strong>${esc(x.v)}</strong></td><td class="n">${x.n}名</td><td class="n">${x.med}投稿</td><td class="n"><strong style="color:#3f6aa8;">${x.rate}%</strong></td><td class="n">${x.other}%</td><td class="n"><strong style="color:#3f6aa8;">${x.diff}pt</strong></td><td class="n">${pf(x.p)}</td></tr>`).join('')}</tbody></table>
+    <p class="note">目安＝万垢達成者の同時期の投稿数（中央値）。8名以上の区分のみ／★＝p&lt;0.1。</p>`;
+}
+// 止まっている段階ごとに、属性別の「止まりやすさ」を比べる（前の段階に届いた人のうち、次に進めていない割合）
+function stuckAttr(c,w){
+  const T=c.tiers;if(!T)return '';
+  const ORD=['none','low','r100','r1','r3','r5','mk'];const STG={fp:0,r100:1,r1:2,r3:3,r5:4,mk:5};const idx=STG[w.k];if(idx==null)return '';
+  const rows=[];ORD.forEach((k,i)=>(T[k]||[]).forEach(r=>rows.push({i,r})));
+  const reached=rows.filter(x=>x.i>=idx),stuck=x=>x.i===idx;
+  const N=reached.length,S=reached.filter(stuck).length;if(N<10||!S)return '';
+  const nf=z=>{const t=1/(1+0.2316419*Math.abs(z));const d=0.3989423*Math.exp(-z*z/2);const pr=1-d*t*(1.330274*t**4-1.821256*t**3+1.781478*t*t-0.356538*t+0.319381);return z>0?pr:1-pr;};
+  const F={'年代':x=>x.r[12],'職業':x=>x.r[13],'コース':x=>x.r[5],'ジャンル':x=>x.r[6]};
+  const out=[];
+  Object.entries(F).forEach(([lb,f])=>{const g={};reached.forEach(x=>{const v=f(x);if(!v||/^（|その他|未設定/.test(v))return;(g[v]=g[v]||{n:0,s:0}).n++;if(stuck(x))g[v].s++;});
+    Object.entries(g).forEach(([v,o])=>{if(o.n<8)return;const n2=N-o.n,s2=S-o.s;if(n2<8)return;const p1=o.s/o.n,p2=s2/n2,pp=S/N,se=Math.sqrt(pp*(1-pp)*(1/o.n+1/n2));const p=se?+(2*(1-nf(Math.abs((p1-p2)/se)))).toFixed(4):1;
+      out.push({lb,v,n:o.n,s:o.s,rate:+(p1*100).toFixed(1),other:+(p2*100).toFixed(1),diff:+((p1-p2)*100).toFixed(1),p});});});
+  const bad=out.filter(x=>x.diff>0).sort((a,b)=>a.p-b.p||b.diff-a.diff);
+  const good=out.filter(x=>x.diff<0).sort((a,b)=>a.p-b.p||a.diff-b.diff);
+  const gSig=good.filter(x=>x.p<0.1),gShow=(gSig.length?gSig:good).slice(0,4);
+  const sig=bad.filter(x=>x.p<0.1),show=(sig.length?sig:bad).slice(0,6);
+  const base=+(S/N*100).toFixed(1);
+  const pf=p=>p<0.1?`<strong>★${p<0.001?'&lt;0.001':p}</strong>`:String(p);
+  const sum=sig.length?`止まりやすいのは${sig.slice(0,3).map(x=>`<strong>${esc(x.lb)}「${esc(x.v)}」</strong>（${x.rate}%）`).join('、')}。全体（${base}%）より有意に高い。`:`全体（${base}%）より有意に止まりやすい属性はなく、特定の層ではなく全体の問題。下は差の大きい順の参考。`;
+  const gSum=gSig.length?`進めているのは${gSig.slice(0,3).map(x=>`<strong>${esc(x.lb)}「${esc(x.v)}」</strong>（止まっているのは${x.rate}%）`).join('、')}。全体（${base}%）より有意に低く、この段階を越えやすい。`:(good.length?`全体より有意に進めている属性はない。下は差の大きい順の参考。`:'');
+  const tbl=(L,col)=>`<table><thead><tr><th>属性</th><th>区分</th><th class="n">${w.pl}に届いた人</th><th class="n">止まっている</th><th class="n">止まっている割合</th><th class="n">その他の生徒</th><th class="n">差</th><th class="n">p値</th></tr></thead><tbody>${L.map(x=>`<tr${x.p<0.1?'':' style="color:#8a909c;"'}><td>${x.lb}</td><td><strong>${esc(x.v)}</strong></td><td class="n">${x.n}名</td><td class="n">${x.s}名</td><td class="n"><strong style="color:${col};">${x.rate}%</strong></td><td class="n">${x.other}%</td><td class="n"><strong style="color:${col};">${x.diff>0?'+':''}${x.diff}pt</strong></td><td class="n">${pf(x.p)}</td></tr>`).join('')}</tbody></table>`;
+  // 止まっている理由：投稿が少ないのか、投稿しているのに伸びていない（アカウント設計の問題）のか
+  const PTH={fp:5,r100:10,r1:20,r3:30,r5:35,mk:40}[w.k]||10;
+  const SL=reached.filter(stuck).map(x=>x.r).filter(r=>r[3]!=null);
+  const few=SL.filter(r=>r[3]<PTH),many=SL.filter(r=>r[3]>=PTH);
+  // 投稿を追う担当：特進・コミット＝MG、それ以外（ベーシックなど）＝運営
+  const isCoach=r=>/特進|コミット/.test(r[5]||'');
+  const md=a=>{const s=a.map(r=>r[3]).sort((x,y)=>x-y);return s.length?s[Math.floor(s.length/2)]:'—';};
+  const why=SL.length?(()=>{const fp=+(few.length/SL.length*100).toFixed(1),mp=+(many.length/SL.length*100).toFixed(1);
+    const v=fp>=60?'<strong style="color:#3f6aa8;">投稿が少ないことが主な原因</strong>（運営・MG：投稿本数を増やす支援）':(mp>=60?'<strong style="color:#3f6aa8;">投稿しているのに伸びていないことが主な原因</strong>（講師：アカウント設計・企画の見直し）':'<strong style="color:#3f6aa8;">投稿不足と伸び不足が半々</strong>（運営・MGと講師で分担）');
+    // 生徒の一覧（名前からInstagramに飛べる表）
+    const lst=L=>L.length?`</p><table><thead><tr><th>生徒</th><th>クラス</th><th>コース</th><th>担当MG</th><th class="n">投稿数</th><th class="n">フォロワー</th></tr></thead><tbody>${L.slice().sort((a,b)=>(b[3]||0)-(a[3]||0)).map(r=>`<tr><td><strong>${r[4]?`<a href="${esc(r[4])}" target="_blank">${esc(r[0])}</a>`:esc(r[0])}</strong></td><td>${esc(r[1]||'—')}</td><td>${esc(r[5]||'—')}</td><td>${esc(r[7]||'—')}</td><td class="n">${r[3]??'—'}</td><td class="n">${r[2]!=null?Number(r[2]).toLocaleString():'—'}</td></tr>`).join('')}</tbody></table><p>`:'';
+    const _lstOld=L=>L.slice().sort((a,b)=>(b[3]||0)-(a[3]||0)).map(r=>`${r[4]?`<a href="${esc(r[4])}" target="_blank">${esc(r[0])}</a>`:esc(r[0])}（${r[3]}投稿・${r[2]!=null?Number(r[2]).toLocaleString():'—'}人）`).join('、');
+    return `<p style="margin:8px 0 2px;"><strong>止まっている理由（投稿不足か、伸び不足か）</strong></p><div class="box"><p>${v}</p></div>
+      <table><thead><tr><th>止まっている理由</th><th class="n">人数</th><th class="n">割合</th><th class="n">投稿数の中央値</th><th>担当</th></tr></thead><tbody>
+      <tr><td><strong>投稿が少ない</strong>（${PTH}投稿未満）</td><td class="n"><strong>${few.length}名</strong></td><td class="n">${fp}%</td><td class="n">${md(few)}投稿</td><td>${(()=>{const mg=few.filter(isCoach).length;return `MG（特進・コミット）${mg}名／運営（その他）${few.length-mg}名`;})()}</td></tr>
+      <tr><td><strong>投稿しているのに伸びていない</strong>（${PTH}投稿以上）</td><td class="n"><strong>${many.length}名</strong></td><td class="n">${mp}%</td><td class="n">${md(many)}投稿</td><td>講師</td></tr></tbody></table>
+      ${(()=>{const P=c.stagePast,o=P&&P.byStage&&P.byStage[w.k];if(!o||o.fewC==null||!o.known)return '';
+        const fc=few.filter(isCoach).length,fo=few.length-fc,mn=many.length;
+        const cur=x=>+(x/N*100).toFixed(1);
+        const rw=(lb,n,pr)=>{const cr=cur(n),d=+(cr-pr).toFixed(1),exp=Math.round(N*pr/100),ex=n-exp;
+          return `<tr><td><strong>${lb}</strong></td><td class="n"><strong>${n}名</strong>（${cr}%）</td><td class="n">${pr}%（今月なら約${exp}名）</td><td class="n"><strong style="color:${d>0?'#3f6aa8':'#c0453f'};">${d>0?'+':''}${d}pt</strong></td><td><strong style="color:${ex>0?'#3f6aa8':'#c0453f'};">${ex>0?`${ex}名多い`:(ex<0?`${-ex}名少ない`:'同じ')}</strong></td></tr>`;};
+        return `<p style="margin:8px 0 2px;"><strong>過去の万垢達成月と比べて多いか少ないか</strong>（${w.pl}に届いた人のうちの割合・同じ時期）</p>
+          <table><thead><tr><th>止まっている理由</th><th class="n">今月</th><th class="n">過去の万垢達成月</th><th class="n">差</th><th>判定</th></tr></thead><tbody>
+          ${rw('投稿が少ない：MGの担当（特進・コミット）',fc,o.fewC)}${rw('投稿が少ない：運営の担当（ベーシックなど）',fo,o.fewO)}${rw('投稿しているのに伸びていない（講師）',mn,o.many)}</tbody></table>
+          <p class="note">過去の万垢達成月の割合は、${w.pl}に届いた人のうち、その時点で止まっていた人の割合（投稿数はその時点の投稿数シートの投稿日から算出、投稿日が分かる${o.known}名の内訳を全体に当てはめた値）。「今月なら約◯名」は今月の${w.pl}に届いた${N}名に当てはめた人数。</p>`;})()}
+      ${few.length?`<details><summary style="font-weight:700;margin:4px 0;">投稿が少ない生徒：MGの担当（特進・コミット）${few.filter(isCoach).length}名</summary><p style="font-size:13px;line-height:1.9;">${lst(few.filter(isCoach))||'該当なし'}</p></details><details><summary style="font-weight:700;margin:4px 0;">投稿が少ない生徒：運営の担当（ベーシックなど）${few.filter(r=>!isCoach(r)).length}名</summary><p style="font-size:13px;line-height:1.9;">${lst(few.filter(r=>!isCoach(r)))||'該当なし'}</p></details>`:''}
+      ${many.length?`<details><summary style="font-weight:700;margin:4px 0;">投稿しているのに伸びていない${many.length}名（アカウント設計の確認対象）</summary><p style="font-size:13px;line-height:1.9;">${lst(many)}</p></details>`:''}
+      <p class="note">目安＝この段階を越えるのに必要な投稿数の目安（${w.lb}まで${PTH}投稿）。これ以上投稿していても止まっている人は、投稿の量よりアカウント設計・企画に課題がある可能性が高い。</p>`;})():'';
+  // 過去の万垢達成月（同じ時期）との比較
+  const pastCmp=(()=>{const P=c.stagePast;if(!P||!P.months||!P.months.length)return '';const o=P.byStage[w.k];if(!o||o.rate==null)return '';
+    const d=+(base-o.rate).toFixed(1),need=Math.max(0,Math.ceil(S-N*o.rate/100));
+    const mm=P.months.map(x=>+x.split('/')[1]+'月').join('・');
+    return `<p style="margin:8px 0 2px;"><strong>過去の万垢達成月との比較</strong>（${mm}卒業・卒業まで残り${P.dl}日の時点）</p>
+      <table><thead><tr><th></th><th class="n">${w.pl}に届いた人</th><th class="n">止まっている人</th><th class="n">止まっている割合</th></tr></thead><tbody>
+      <tr><td><strong>今月</strong></td><td class="n">${N}名</td><td class="n">${S}名</td><td class="n"><strong style="color:${d>0?'#3f6aa8':'#c0453f'};">${base}%</strong></td></tr>
+      <tr><td>過去の万垢達成月</td><td class="n">${o.n}名</td><td class="n">${o.s}名</td><td class="n">${o.rate}%</td></tr>
+      <tr><td><strong>差</strong></td><td colspan="3" class="n"><strong style="color:${d>0?'#3f6aa8':'#c0453f'};">${d>0?'+':''}${d}pt</strong>${d>0?`（達成月と同じ水準にするには、止まっている${S}名のうち<strong>あと${need}名</strong>が${w.lb}に届く必要がある）`:'（達成月より進んでいる）'}</td></tr></tbody></table>`;})();
+  return `<p style="margin-top:14px;"><strong>▼ ${w.pl}→${w.lb}で止まっている生徒の属性</strong>（${w.pl}に届いた${N}名のうち${S}名が止まっている＝${base}%）</p>
+    ${pastCmp}
+    ${why}
+    <p style="margin:8px 0 2px;"><strong style="color:#3f6aa8;">止まりやすい属性</strong></p><div class="box"><p>${sum}</p></div>${show.length?tbl(show,'#3f6aa8'):''}
+    ${gShow.length?`<p style="margin:12px 0 2px;"><strong style="color:#c0453f;">進めている属性</strong></p><div class="box"><p>${gSum}</p></div>${tbl(gShow,'#c0453f')}`:''}
+    <p class="note">止まっている割合＝${w.pl}に届いた人のうち、${w.lb}にまだ届いていない人の割合。8名以上の区分のみ／★＝p&lt;0.1／灰色の行＝統計的な差なし（参考）。</p>`;
+}
+function _stuckOld(){const w={},N=0,S=0,base=0,sum='',show=[],pf=()=>'';
+  return `<p style="margin-top:14px;"><strong>▼ ${w.pl}→${w.lb}で止まっている生徒の属性</strong>（${w.pl}に届いた${N}名のうち${S}名が止まっている＝${base}%）</p>
+    <div class="box"><p>${sum}</p></div>
+    ${show.length?`<table><thead><tr><th>属性</th><th>区分</th><th class="n">${w.pl}に届いた人</th><th class="n">止まっている</th><th class="n">止まっている割合</th><th class="n">その他の生徒</th><th class="n">差</th><th class="n">p値</th></tr></thead><tbody>${show.map(x=>`<tr><td>${x.lb}</td><td><strong>${esc(x.v)}</strong></td><td class="n">${x.n}名</td><td class="n">${x.s}名</td><td class="n"><strong style="color:#3f6aa8;">${x.rate}%</strong></td><td class="n">${x.other}%</td><td class="n"><strong style="color:#3f6aa8;">+${x.diff}pt</strong></td><td class="n">${pf(x.p)}</td></tr>`).join('')}</tbody></table><p class="note">止まっている割合＝${w.pl}に届いた人のうち、${w.lb}にまだ届いていない人の割合。8名以上の区分のみ／★＝p&lt;0.1。</p>`:''}`;
+}
+// ── ③ 生徒の分類 ──
+const TIERS=[['mk','万垢生','#c0762e'],['r5','5,000人以上','#a8792b'],['r3','3,000人以上','#2f7d5b'],['r1','1,000人以上','#3f6aa8'],['r100','100人以上','#6c8fc7'],['low','100人未満（投稿あり）','#9aa6bd'],['n2','未投稿（アカウント作成済み）','#c3c8d1'],['n3','アカウント作成フォーム未反映（投稿宣言済み）','#b9a27a'],['n1','アカウント未作成','#d8a46b'],['n0','プログラム未開始','#c97a7a']];
+// 未投稿（none）を、進み具合で4つに分ける：3＝投稿宣言済み／2＝アカウント作成済み／1＝プログラム開始のみ／0＝プログラム未開始
+// ジャンルが入っている人はアカウント設計まで進んでいるので、他の状態に関わらず「未投稿（アカウント作成済み）」に入れる
+function splitT(T){if(!T)return null;const o=Object.assign({},T);const L=T.none||[];const st=r=>r[6]?2:(r[15]??0);[0,1,2,3].forEach(i=>o['n'+i]=L.filter(r=>st(r)===i));return o;}
+function tierHtml(c,m,full){
+  const T=splitT(c.tiers);if(!T)return `<h3>生徒の分類</h3><p class="note">KPIダッシュボードを開き直すと記録されます</p>`;
+  const N=c.n||1,mx=Math.max(...TIERS.map(([k])=>(T[k]||[]).length),1);
+  const bars=`<div style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 12px;">${TIERS.map(([k,lb,col])=>{const n=(T[k]||[]).length;return `<div style="display:flex;align-items:center;gap:10px;margin:5px 0;"><span style="flex:0 0 270px;font-size:13px;font-weight:700;">${lb}</span><span style="flex:1;height:16px;background:#eef0f3;border-radius:4px;overflow:hidden;"><span style="display:block;height:100%;width:${n/mx*100}%;background:${col};"></span></span><span style="flex:0 0 110px;text-align:right;font-size:13px;font-weight:700;font-feature-settings:'tnum' 1;">${n}名（${(n/N*100).toFixed(1)}%）</span></div>`;}).join('')}</div>`;
+  // 一覧は開いたときに描画する（全月分を一度に描くと重いため）。Notion書き出し時（full）は最初から中身を入れる
+  window._tierRows=window._tierRows||{};
+  const lists=TIERS.map(([k,lb])=>{const L=T[k]||[];if(!L.length)return '';const ov=L.filter(r=>r[9]===1).length,lt=L.filter(r=>r[9]===2).length;
+    const tid='t_'+c.ym.replace('/','')+'_'+k;
+    // 未投稿の内訳（どこまで進んでいるか）
+    const PRE=['<strong style="color:#bb4b4b;">プログラム未開始</strong>','<strong style="color:#a8792b;">アカウント未設計</strong>','アカウント作成済み（宣言前）','投稿宣言済み'];
+    const preTbl='';const _unused=k==='none'?(()=>{const cn=[0,1,2,3].map(i=>L.filter(r=>(r[15]??0)===i).length);return `<table><thead><tr><th>未投稿の内訳</th><th class="n">人数</th><th class="n">未投稿に占める割合</th></tr></thead><tbody>${[0,1,2,3].map(i=>`<tr><td>${PRE[i]}</td><td class="n"><strong>${cn[i]}名</strong></td><td class="n">${(cn[i]/L.length*100).toFixed(1)}%</td></tr>`).join('')}</tbody></table><p class="note">プログラム未開始＝プログラム開始日がない／アカウント未設計＝開始しているがアカウント作成日がない（CS数値管理シートの日付で判定）</p>`;})():'';
+    const body=()=>`${preTbl}${c.phase==='grad'&&L.some(r=>r[14])?'<p class="note">灰色の行＝卒業済みの生徒</p>':''}${lt?`<p class="note">「卒業後に達成」の生徒は、卒業日の後に万垢フォーム回答または10,000フォロワーに達しています。KGI（卒業日時点の万垢率）には数えていません。</p>`:''}${ov?`<p class="note">「1万人超」の生徒は今日のフォロワーが10,000人を超えていますが、CS数値管理シートに10,000フォロワー達成日・万垢フォーム回答日が入っていないため、万垢生（KGI）には数えていません。日付を入れると万垢生に移ります。</p>`:''}<table><thead><tr><th>生徒</th>${k==='none'?'<th>状況</th>':''}${c.phase==='grad'?'<th>卒業日</th>':''}<th>クラス</th><th>コース</th><th>ジャンル</th><th>担当MG</th><th class="n">フォロワー</th><th class="n">投稿数</th></tr></thead><tbody>${L.map(r=>`<tr${(c.phase==='grad'&&r[14])?' style="background:#eceef1;color:#6c707b;"':(r[9]?' style="background:#fbf6ec;"':'')}><td>${r[4]?`<a href="${esc(r[4])}" target="_blank">${esc(r[0])}</a>`:esc(r[0])}${r[9]===2?` <strong style="color:#a8792b;font-size:11px;">卒業後に達成（${esc(r[10]||'')}）</strong>`:''}${r[9]===1?' <strong style="color:#a8792b;font-size:11px;">1万人超</strong>':''}</td>${k==='none'?`<td>${PRE[r[15]??0]}</td>`:''}${c.phase==='grad'?`<td>${esc(r[11]||'—')}</td>`:''}<td>${esc(r[1]||'—')}</td><td>${esc(r[5]||'—')}</td><td>${esc(r[6]||'—')}</td><td>${esc(r[7]||'—')}</td><td class="n">${r[2]!=null?Number(r[2]).toLocaleString():'—'}</td><td class="n">${r[3]??'—'}</td></tr>`).join('')}</tbody></table>`;
+    window._tierRows[tid]=body;
+    return `<details${full?'':` ontoggle="if(this.open&&!this.dataset.f){this.dataset.f=1;this.querySelector('.tb').innerHTML=window._tierRows['${tid}']();}"`}><summary style="font-weight:800;margin:6px 0;">${lb}：${L.length}名${lt?`<span style="font-weight:600;color:#a8792b;margin-left:6px;">（うち卒業後に達成${lt}名・KGIには含まない）</span>`:''}${ov?`<span style="font-weight:600;color:#a8792b;margin-left:6px;">（うち1万人超・万垢未記録${ov}名）</span>`:''}</summary><div class="tb">${full?body():''}</div></details>`;}).join('');
+  return `<h3>生徒の分類</h3>${bars}${lists}`;
+}
+// ── フェーズ1：プログラムのSTEPごとの生徒分類 ──
+const STIERS=[['done','完了（STEP18）','#c0453f',s=>s>=18],['s15','STEP15〜17','#a8792b',s=>s>=15&&s<=17],['s10','STEP10〜14','#2f7d5b',s=>s>=10&&s<=14],['s5','STEP5〜9','#3f6aa8',s=>s>=5&&s<=9],['s1','STEP1〜4','#6c8fc7',s=>s>=1&&s<=4],['s0','未着手（STEP0）','#9aa0ab',s=>s===0]];
+function stepTierHtml(c,m){
+  const S=(c.progBreak&&c.progBreak.stu)||[];if(!S.length)return `<h3>生徒の分類（STEP別）</h3><p class="note">KPIダッシュボードを開き直すと記録されます</p>`;
+  const N=S.length,G=STIERS.map(([k,lb,col,f])=>[k,lb,col,S.filter(r=>f(r[4]))]),mx=Math.max(...G.map(g=>g[3].length),1);
+  const bars=`<div style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 12px;">${G.map(([k,lb,col,L])=>`<div style="display:flex;align-items:center;gap:10px;margin:5px 0;"><span style="width:130px;font-size:13px;font-weight:700;">${lb}</span><span style="flex:1;height:16px;background:#eef0f3;border-radius:5px;overflow:hidden;"><span style="display:block;height:100%;width:${L.length/mx*100}%;background:${col};"></span></span><span style="width:110px;text-align:right;font-size:13px;"><strong>${L.length}名</strong>（${pc(L.length,N)}%）</span></div>`).join('')}</div>`;
+  const row=r=>`<tr${r[6]>60?' style="background:#eceef1;color:#6c707b;"':(r[7]!=null&&r[7]>=7&&!r[5]?' style="background:#fbf6ec;"':'')}><td><strong>${esc(r[0])}</strong></td><td>${esc(r[1]||'—')}</td><td>${esc(r[2]||'—')}</td><td>${esc(r[3]||'—')}</td><td class="n">${r[5]?'完了':'STEP'+r[4]}</td><td class="n">${r[6]}日</td><td class="n">${r[5]?'—':(r[7]==null?'—':r[7]+'日')}</td></tr>`;
+  // 並び：60日以内（残り期間がある）生徒を上に。その中は停滞（黄色）→STEPが進んでいる順
+  const ord=(a,b)=>((a[6]>60)-(b[6]>60))||((b[7]!=null&&b[7]>=7&&!b[5])-(a[7]!=null&&a[7]>=7&&!a[5]))||(b[4]-a[4])||((b[7]||0)-(a[7]||0));
+  const lists=G.filter(g=>g[3].length).map(([k,lb,col,L])=>{const act=L.filter(r=>r[6]<=60).length;return `<details><summary style="font-weight:800;margin:6px 0;"><span style="color:${col};">■</span> ${lb}（${L.length}名${k!=='done'?`／残り期間あり${act}名`:''}）</summary><table><thead><tr><th>生徒</th><th>クラス</th><th>コース</th><th>担当MG</th><th class="n">到達STEP</th><th class="n">開始から</th><th class="n">最後の完了から</th></tr></thead><tbody>${L.slice().sort(ord).map(row).join('')}</tbody></table></details>`;}).join('');
+  return `<h3>生徒の分類（STEP別）</h3>${bars}<p class="note">灰色の行＝プログラム開始から60日を過ぎた生徒／黄色の行＝最後のSTEP完了から7日以上進んでいない生徒（停滞）</p>${lists}`;
+}
+// ── フェーズ1：プログラムを終わらせるためのアクションプラン ──
+function stepTierPlan(c,m){
+  const S=(c.progBreak&&c.progBreak.stu)||[];if(!S.length)return '';
+  const PB=c.progBreak||{},tot=PB.total||{};
+  const p=c.p1||{},tg=c.targets.npp||50;
+  // 分母・分子はボード（60日以内STEP18完了率）と同じ値を使う。ボードが記録されていない時だけ集計値を使う
+  const _bd=(()=>{const hh=SHOTS&&SHOTS.html&&SHOTS.html.cohorts&&(SHOTS.html.cohorts[c.ym]||{}).kgi;if(!hh)return null;const d=document.createElement('div');d.innerHTML=hh;const mm=d.textContent.match(/(\d+)\s*\/\s*(\d+)\s*人/);return mm?{k:+mm[1],n:+mm[2]}:null;})();
+  const dn=_bd?_bd.n:(tot.n||p.dn||S.length),in60=_bd?_bd.k:(tot.in60!=null?tot.in60:(p.n||0)),need=Math.max(0,Math.ceil(dn*tg/100)-in60);
+  const isC=r=>/特進|コミット/.test(r[2]||'');
+  const own=L=>{const a=L.filter(isC).length;return `MG（特進）${a}名／運営（ベーシック）${L.length-a}名`;};
+  const left=r=>Math.max(0,60-r[6]);
+  // アクションプランは「残り期間がある（60日以内）未完了の生徒」だけを対象にする
+  const ACT=S.filter(r=>!r[5]&&r[6]<=60);
+  const G={};STIERS.forEach(([k,,, f])=>G[k]=ACT.filter(r=>f(r[4])));
+  const stag=ACT.filter(r=>r[7]!=null&&r[7]>=7);
+  const A={
+    s15:['最後の押し上げ。STEP18までの残り作業を一緒に確認し、完了日を決める','完了 +'],
+    s10:['残りのSTEPを週ごとに区切る（目安：1週で3STEP）。60日に間に合うペースかを確認','STEP15到達 +'],
+    s5:['つまずきやすいSTEP（7・10・12・13）の前で手順を共有。停滞している人に個別に声かけ','STEP10到達 +'],
+    s1:['初期設計・自己分析を一緒に進める。作業の日を決めて進捗を確認','STEP5到達 +'],
+    s0:['まだ始めていない。開始の声かけと、STEP1をその場で一緒に終える','STEP1到達 +']};
+  // 重点：残り日数で完了に届きうる層（STEP15以上は常に、STEP10〜14は残り14日以上なら）
+  const focus=['s15'].concat(G.s10.filter(r=>left(r)>=14).length?['s10']:[]);
+  const rows=['s15','s10','s5','s1','s0'].map(k=>{const L=G[k];if(!L.length)return '';const lb=STIERS.find(x=>x[0]===k)[1],a=A[k],f=focus.includes(k);const st=L.filter(r=>r[7]!=null&&r[7]>=7).length;const lm=L.map(left).sort((x,y)=>x-y)[Math.floor(L.length/2)];
+    return `<tr${f?' style="background:#fdecec;"':''}><td>${f?'<strong style="color:#c0453f;">★重点</strong> ':''}<strong>${lb}</strong></td><td class="n">${L.length}名${st?`<br><span style="color:#a8792b;font-size:12px;">うち停滞${st}名</span>`:''}<br><span style="color:#6c707b;font-size:12px;">残り中央値${lm}日</span></td><td>${own(L)}</td><td>${a[0]}</td><td>次回の週次レポート</td><td>${a[1]}</td></tr>`;}).join('');
+  const over=S.filter(r=>!r[5]&&r[6]>60).length;
+  const near=G.s15.length+G.s10.filter(r=>left(r)>=14).length;
+  const sum=need?`目標（60日以内完了率${tg}%）まで<strong>あと${need}名</strong>。残り期間がある未完了の生徒は<strong>${ACT.length}名</strong>${ACT.length<need?`で、全員が完了しても<strong style="color:#3f6aa8;">${need-ACT.length}名足りない</strong>。届かない分は、今後の開始月の初動で取り返す`:`。うちSTEP15以上と、余裕のあるSTEP10〜14の計${near}名が完了すれば${near>=need?'届く':`${need-near}名足りない`}`}。`:'60日以内完了率の目標は達成。残りの生徒も完了まで伴走する。';
+  return `<h3>④ アクションプラン（プログラムを終わらせるには）</h3>
+    <div class="box"><p>${sum}${stag.length?`そのうち停滞（最後の完了から7日以上）が<strong>${stag.length}名</strong>いるので、まずこの人たちに声かけする。`:''}</p></div>
+    <p class="note">対象＝プログラム開始から60日以内の未完了の生徒（${ACT.length}名）。60日を過ぎた未完了の${over}名は60日以内完了率には届かないため除いています。★重点＝残り日数で完了に届きうる層。担当＝特進・コミットはMG、ベーシックなどは運営。</p>
+    ${rows?`<table><thead><tr><th>分類</th><th class="n">人数</th><th>担当</th><th>やること</th><th>期限</th><th>見る数字</th></tr></thead><tbody>${rows}</tbody></table>`:'<p class="note">残り期間がある未完了の生徒はいません</p>'}`;
+}
+// ── ④ アクションプラン（分類ごと）──
+function tierPlan(c,m){
+  const T=splitT(c.tiers);if(!T)return '';
+  const L=c.daysLeft||0,at=new Date(CUR.at),dl=new Date(at.getTime()+7*864e5),due=`${dl.getMonth()+1}/${dl.getDate()}`;
+  // 残り日数で次の段階に届きうる層を「重点」にする
+  const focus=L<=30?['r5']:(L<=60?['r5','r3']:(L<=90?['r5','r3','r1']:['r3','r1','r100','n3','n2']));
+  // 卒業月は卒業済みの生徒を除く（残り期間がある生徒だけが対象）
+  const act=r=>!(c.phase==='grad'&&r[14]);
+  const TT={};Object.keys(T).forEach(k=>TT[k]=(T[k]||[]).filter(act));
+  const gradOut=c.phase==='grad'?Object.values(T).flat().filter(r=>r[14]).length:0;
+  const own=(k,L)=>{const coachK=['r1','low','n0','n1','n2','n3','none'].includes(k);if(!coachK)return '講師';const a=L.filter(r=>/特進|コミット/.test(r[5]||'')).length;return [a?`MG（特進）${a}名`:'',L.length-a?`運営（ベーシック）${L.length-a}名`:''].filter(Boolean).join('／');};
+  // A：[やること, どうアプローチするか, 見る数字]
+  const A={mk:['伸びた投稿の型を他の生徒に共有する','お手本として、同じジャンルの生徒に投稿を紹介する（講師から個別に共有）','—'],
+    r5:['伸びた投稿の型を再現して週3本出す','同じジャンルの万垢生の投稿を一緒に見て、伸びた投稿の型を1つ決める。講師が次の企画を個別に確認する','万垢'],
+    r3:['伸びた投稿の型を週2本以上出す','同じジャンルのお手本を共有し、伸びた投稿の企画・構成を真似する。講師が週1回企画を確認する','5,000人到達'],
+    r1:['週2本のペースを保つ','MG／運営が週の投稿本数を一緒に決め、止まっている人に個別に声かけする','3,000人到達'],
+    r100:['伸びる型を見つける','講師が企画・構成を個別に確認し、伸びた投稿と伸びなかった投稿の違いを伝える','1,000人到達'],
+    low:['投稿を続ける（週2本）','MG／運営が投稿の日を一緒に決め、止まっている人に個別に声かけする','100人到達'],
+    n0:['プログラムを始めてもらう','MG／運営が開始の案内を送り、反応がなければ個別に連絡する','プログラム開始'],
+    n1:['アカウント設計を進める','止まっているSTEPを確認し、MG／運営がそのSTEPを一緒に進める','アカウント作成'],
+    n2:['初投稿の日を決める','投稿開始宣言と初投稿の日を一緒に決め、当日に声かけする','初投稿'],
+    n3:['初投稿を後押しする','アカウント作成フォームへの反映を確認し、初投稿の日を一緒に決める','初投稿'],
+    none:['初投稿の日を決める','止まっているSTEPを確認し、初投稿の日を一緒に決めて個別に声かけする','初投稿']};
+  const rows=TIERS.map(([k,lb])=>{const L=TT[k]||[];const n=L.length;if(!n)return '';const a=A[k]||A.none,f=focus.includes(k);
+    return `<tr${f?' style="background:#fdecec;"':''}><td>${f?'<strong style="color:#c0453f;">★重点</strong> ':''}<strong>${lb}</strong></td><td class="n">${n}名</td><td>${own(k,L)}</td><td><strong>${a[0]}</strong></td><td>${a[1]}</td><td>${due}</td><td>${a[2]==='—'?'—':`${a[2]}した人数（この層${n}名中）`}</td></tr>`;}).join('');
+  // 対象の生徒（分類ごとのトグル）
+  const lists=TIERS.map(([k,lb,col])=>{const L=TT[k]||[];if(!L.length||k==='mk')return '';const f=focus.includes(k);
+    const who=r=>{if(!['r1','low','n0','n1','n2','n3','none'].includes(k))return '講師';return /特進|コミット/.test(r[5]||'')?`MG（${esc(r[7]||'—')}）`:'運営';};
+    return `<details><summary style="font-weight:800;margin:6px 0;"><span style="color:${col};">■</span> ${f?'★重点 ':''}${lb}の対象（${L.length}名）</summary><table><thead><tr><th>生徒</th><th>クラス</th><th>コース</th><th>担当</th><th class="n">フォロワー</th><th class="n">投稿数</th></tr></thead><tbody>${L.slice().sort((a,b)=>(b[2]||0)-(a[2]||0)).map(r=>`<tr><td>${r[4]?`<a href="${esc(r[4])}" target="_blank">${esc(r[0])}</a>`:esc(r[0])}</td><td>${esc(r[1]||'—')}</td><td>${esc(r[5]||'—')}</td><td>${who(r)}</td><td class="n">${r[2]!=null?Number(r[2]).toLocaleString():'—'}</td><td class="n">${r[3]??'—'}</td></tr>`).join('')}</tbody></table></details>`;}).join('');
+  return `<h3>④ アクションプラン（残り${L}日）</h3><p class="note">★重点＝残り日数で次の段階に届きうる層。期限＝次回の週次レポート。担当＝特進・コミットはMG、ベーシックなどは運営（投稿の量）、伸び方は講師。${gradOut?`卒業済みの${gradOut}名は対象から除いています。`:''}</p>
+    <table><thead><tr><th>分類</th><th class="n">人数</th><th>担当</th><th>やること</th><th>どうアプローチするか</th><th>期限</th><th>見る数字</th></tr></thead><tbody>${rows}</tbody></table>
+    <p style="margin:12px 0 4px;"><strong>対象の生徒</strong>（分類をタップすると一覧が開きます）</p>${lists}`;
+}
+// HTML→Markdown（Notion用）：表はMarkdownの表、トグルは太字の見出し＋中身、太字は**、画像の場所は@@SHOT@@
+function h2md(html){
+  const d=document.createElement('div');d.innerHTML=html;const out=[];
+  const txt=el=>{let s='';el.childNodes.forEach(n=>{if(n.nodeType===3)s+=n.textContent;else if(n.nodeType===1){if(n.tagName==='BR')s+='\n';else if(/^(STRONG|B)$/.test(n.tagName)){const t=txt(n).trim();s+=t?`**${t}**`:'';}else if(n.tagName==='A'){const t=txt(n);s+=n.href?`[${t}](${n.getAttribute('href')})`:t;}else s+=txt(n);}});return s.replace(/[ \t]+/g,' ');};
+  const walk=el=>{[...el.children].forEach(n=>{const t=n.tagName;
+    if(t==='TABLE'){const rs=[...n.rows];if(!rs.length)return;const cell=c=>txt(c).replace(/\|/g,'｜').replace(/\n/g,' ').trim()||'—';const hd=[...rs[0].cells].map(cell);out.push('','| '+hd.join(' | ')+' |','|'+hd.map(()=>'---').join('|')+'|',...rs.slice(1).map(r=>'| '+[...r.cells].map(cell).join(' | ')+' |'),'');}
+    else if(t==='DETAILS'){const sm=n.querySelector(':scope>summary');out.push('',`**${sm?txt(sm).trim():''}**`);const c=n.cloneNode(true);const s2=c.querySelector(':scope>summary');if(s2)s2.remove();walk(c);}
+    else if(/^H[1-4]$/.test(t)){out.push('','#'.repeat(Math.min(4,+t[1]))+' '+txt(n).trim(),'');}
+    else if(t==='P'){const s=txt(n).trim();if(s==='@@SHOT@@')out.push('@@SHOT@@');else if(s)out.push(s,'');}
+    else if(t==='DIV'&&n.querySelector('table,p,details,h3,h4,div'))walk(n);
+    else{const s=txt(n).trim();if(s)out.push(s,'');}
+  });};
+  walk(d);return out.map(l=>typeof l==='string'?l.replace(/\*\*\*\*/g,'** **'):l);
+}
+function analysis(c){
+  const good=[],bad=[],bench=CUR.bench||{};
+  const K=[['mk','万垢率','万垢'],['r5','5000人以上率','5000人以上'],['r3','3000人以上率','3000人以上'],['r1','1000人以上率','1000人以上']];
+  K.forEach(([k,lb,sh])=>{const tg=c.targets[k];if(tg==null)return;const p=pc(c.cur[k],c.n),d=c.cur[k]-c.prev[k],need=Math.max(0,Math.ceil(c.n*tg/100)-c.cur[k]);
+    if(p>=tg)good.push(`${lb}は${p}%で目標${tg}%を達成${d>0?`（先週から${sh}の生徒が${d}名増加）`:''}。`);
+    else if(need<=3&&d>0)good.push(`${sh}の生徒が${d}名増加し、${lb}はあと${need}名で目標${tg}%に届く見込み。`);
+    else bad.push(`${lb}は${p}%で目標${tg}%まであと${need}名${d>0?`（先週比+${d}名）`:'（先週から増加なし）'}。`)});
+  // 通過率で最も弱い段階
+  let prev=c.n,worst=null,best=null;
+  stages(c).forEach(([k,lb,pl])=>{const v=prev?+(c.cur[k]/prev*100).toFixed(1):null;const b=bench[BK[k]];const ref=b?(k==='fp'?b.abs:b.rel):null;
+    if(v!=null&&ref!=null){const g=+(v-ref).toFixed(1);if(!worst||g<worst.g)worst={lb,pl,v,ref,g};if(!best||g>best.g)best={lb,pl,v,ref,g};}prev=c.cur[k]});
+  if(best&&best.g>0)good.push(`${best.pl}→${best.lb}の通過率が${best.v}%（基準${best.ref}%）と基準を上回っている。`);
+  if(worst&&worst.g<0)bad.push(`${worst.pl}→${worst.lb}の通過率が${worst.v}%（基準${worst.ref}%）と${-worst.g}pt下回っており、ここがボトルネック。`);
+  // 投稿量
+  const pt=PHASE_POSTS[c.phase];
+  if(pt&&c.postMed!=null){if(c.postMed>=pt)good.push(`投稿数の中央値は${c.postMed}投稿で、この時期の目安${pt}投稿に届いている。`);else bad.push(`投稿が足りていない。この時期に投稿しておくべき${pt}投稿に対し、中央値は${c.postMed}投稿。`)}
+  // スピード
+  const P=(CUR.past||[]).filter(x=>x.n>=50);
+  if(c.speed&&P.length){const fa=+(P.reduce((s,x)=>s+x.fp60,0)/P.length).toFixed(1),d=+(c.speed.fp60-fa).toFixed(1);
+    if(d>=3)good.push(`初回HRから60日以内の初投稿率が${c.speed.fp60}%と過去平均${fa}%を上回り、立ち上がりが速い。`);
+    else if(d<=-3)bad.push(`初回HRから60日以内の初投稿率が${c.speed.fp60}%と過去平均${fa}%を下回っている。`)}
+  // 属性
+  const a=c.attr||{};[['age','年代'],['course','コース']].forEach(([k,lb])=>{const x=a[k]||[];if(x.length>=2){const t=x[0],b=x[x.length-1];if(t.rate-b.rate>=8){good.push(`${lb}別では「${t.k}」が${t.rate}%（${t.mk}/${t.n}名）と高い。`);bad.push(`${lb}別では「${b.k}」が${b.rate}%（${b.mk}/${b.n}名）と低い。`)}}});
+  return {good,bad};
+}
+function speedTable(){
+  const rows=[...(CUR.past||[]).filter(x=>x.n>=50).map(x=>[x.ym,x.fp60,x.rate,false]),...CUR.cohorts.filter(c=>c.speed&&c.phase!=='prep'&&c.phase!=='phase1').map(c=>[c.ym,c.speed.fp60,pc(c.cur.mk,c.n),true])];
+  return {rows,html:`<table><thead><tr><th>卒業月</th><th>初回HR〜60日以内達成率</th><th>万垢率</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0].replace('/','年').replace(/^(\d+年)0?/,'$1')}月</td><td class="n">${r[1]}%</td><td class="n">${r[2]}%${r[3]?'（現状）':''}</td></tr>`).join('')}</tbody></table>`}
+}
+// ── 統計分析（寄与要因・過去月比較）──
+function statsLines(c){
+  const s=c.stats;if(!s)return null;const cr=pc(c.cur.mk,c.n);
+  const sig=f=>f.p<0.001?'p<0.001':('p='+f.p);
+  const fs=s.factors.filter(f=>f.nw>=30&&f.nwo>=30);
+  // 着地見込みがある月は確定値と、ない月は「卒業まで残り◯日」の同時期の値と比較する
+  const useLand=c.land!=null||!s.dl;
+  const v=c.land!=null?c.land:cr, key=useLand?'rate':'rateAt', mean=useLand?s.mean:s.meanAt, sd=useLand?s.sd:s.sdAt;
+  const rk=[...s.rates.map(x=>x[key]),v].sort((a,b)=>b-a).indexOf(v)+1;
+  const zz=sd?+((v-mean)/sd).toFixed(2):null;
+  const L=[];
+  const base=useLand?`過去${s.rates.length}ヶ月の確定万垢率は平均${mean}%（標準偏差${sd}pt）`:`過去${s.rates.length}ヶ月の「卒業まで残り${s.dl}日」時点の万垢率は平均${mean}%（標準偏差${sd}pt）`;
+  L.push(`${base}。今期の${c.land!=null?'着地見込み':'現在値'}${v}%は${zz!=null?`偏差${zz>=0?'+':''}${zz}σで`:''}、${s.rates.length+1}ヶ月中${rk}位${Math.abs(zz||0)>=1?(zz>0?'（同時期の過去月と比べて明確に高い）':'（同時期の過去月と比べて明確に低い）'):'（過去月の通常の幅の中）'}。`.replace(/同時期の/g,useLand?'':'同時期の'));
+  const strong=fs.filter(f=>f.p<0.05).sort((a,b)=>(b.rr||0)-(a.rr||0));
+  // 過去データ全体の共通の話は最初の月だけに書く
+  if(strong.length&&c.ym===_firstStatYm()){const f=strong[0];L.push(`過去データ（${s.pastN}名）で万垢率との関係が最も強いのは「${f.label}」。該当者${f.rw}%、非該当${f.rwo}%で${f.rr}倍（${sig(f)}）。`);}
+  const pos=fs.filter(f=>f.p<0.05&&f.contrib!=null&&f.contrib>=0.3).sort((a,b)=>b.contrib-a.contrib),neg=fs.filter(f=>f.p<0.05&&f.contrib!=null&&f.contrib<=-0.3).sort((a,b)=>a.contrib-b.contrib);
+  if(pos.length)L.push(`今期の押し上げ要因：${pos.map(f=>`「${f.label}」の割合が過去${f.prevPast}%→今期${f.prevCur}%（万垢率への寄与 約+${f.contrib}pt）`).join('、')}。`);
+  if(neg.length)L.push(`今期の押し下げ要因：${neg.map(f=>`「${f.label}」の割合が過去${f.prevPast}%→今期${f.prevCur}%（万垢率への寄与 約${f.contrib}pt）`).join('、')}。`);
+  if(!pos.length&&!neg.length)L.push('今期の要因の構成は過去月と大きな差がない。');
+  return {L,fs,s};
+}
+function _firstStatYm(){const c=(CUR.cohorts||[]).find(x=>x.stats);return c?c.ym:null;}
+function statsHtml(c){
+  const x=statsLines(c);if(!x)return '';
+  return `<h3>統計分析</h3>${x.L.map(l=>`<p>${esc(l)}</p>`).join('')}
+  <table style="margin-top:10px;"><thead><tr><th>要因</th><th>万垢率（該当／非該当）</th><th>倍率</th><th>p値</th><th>該当者の割合（過去→今期）</th><th>今期への寄与</th></tr></thead><tbody>
+  ${x.fs.map(f=>`<tr><td>${esc(f.label)}</td><td class="n">${f.rw}% ／ ${f.rwo}%</td><td class="n">${f.rr??'—'}倍</td><td class="n">${f.p<0.001?'&lt;0.001':f.p}</td><td class="n">${f.prevPast}% → ${f.prevCur}%</td><td class="n" style="font-weight:800;color:${f.contrib>0?'#c0453f':(f.contrib<0?'#3f6aa8':'inherit')}">${f.contrib==null?'—（進行中）':(f.contrib>0?'+':'')+f.contrib+'pt'}</td></tr>`).join('')}</tbody></table>
+  <p class="note">${c.ym===_firstStatYm()?`計算方法：過去の確定月（${x.s.pastN}名）で要因ごとの万垢率を比較（2標本比率検定）。寄与＝（今期の該当率−過去の該当率）×（該当者の万垢率−非該当者の万垢率）。進行中の月は、過去月の同時期（卒業まで残り同じ日数）の万垢率と比較しています。投稿数は途中経過しか取れないため「30投稿以上」の寄与は進行中の月では算出しません。`:'計算方法は最初の卒業月の注記と同じ。'}</p>`;
+}
+function statsMd(c){const x=statsLines(c);if(!x)return [];
+  return ['### 統計分析','',...x.L.flatMap(l=>[l,'']),'| 要因 | 万垢率（該当／非該当） | 倍率 | p値 | 該当者の割合（過去→今期） | 今期への寄与 |','|---|---:|---:|---:|---:|---:|',
+    ...x.fs.map(f=>`| ${f.label} | ${f.rw}% ／ ${f.rwo}% | ${f.rr??'—'}倍 | ${f.p<0.001?'<0.001':f.p} | ${f.prevPast}% → ${f.prevCur}% | ${f.contrib==null?'—（進行中）':(f.contrib>0?'+':'')+f.contrib+'pt'} |`),''];}
+// ── フェーズ1：プログラム別の完了状況と止まっているSTEP ──
+function progBreak(c){
+  const B=c.progBreak;if(!B)return {html:'',md:[]};
+  // コース別：30・50・60日以内の完了率と、60日以内完了率の目標に対する進捗
+  let cH='',cM=[];
+  if(B.byCourse&&B.byCourse.length){const tg=(c.targets&&c.targets.npp)||50,el=B.elapsed||0;
+    // コースごとの目標：特進・コミットは70%、それ以外（全体・ベーシックなど）はフェーズの目標
+    const tgOf=k=>/特進|コミット/.test(k)?70:tg;
+    const R=B.byCourse.map(x=>{const t=tgOf(x.k),need=Math.max(0,Math.ceil(x.n*t/100)-x.in60),ok=x.in60/x.n*100>=t;return {...x,t,r30:pc(x.in30,x.n),r50:pc(x.in50,x.n),r60:pc(x.in60,x.n),need,ok};});
+    const jd=x=>x.ok?'<strong style="color:#c0453f">✓ 達成</strong>':(el<60?`<strong style="color:#a8792b">進行中・あと${x.need}名</strong>`:`<strong style="color:#3f6aa8">× 未達・あと${x.need}名</strong>`);
+    cH=`<h3>コース別の完了率と目標（60日以内）への進捗</h3><p class="note">目標：特進・コミット70%／全体・その他${tg}%。開始からの経過日数（中央値）${el}日。${el<60?'60日に届いていないため、60日以内完了率はまだ伸びる。':''}</p>
+      <table><thead><tr><th>コース</th><th class="n">対象</th><th class="n">完了率（今日まで）</th><th class="n">30日以内</th><th class="n">50日以内</th><th class="n">60日以内</th><th class="n">目標</th><th>目標に対して</th></tr></thead><tbody>${R.map(x=>`<tr${x.k==='全体'?' style="font-weight:800;background:#f8f9fb"':''}><td><strong>${x.k}</strong></td><td class="n">${x.n}名</td><td class="n"><strong>${pc(x.done,x.n)}%</strong>（${x.done}名）</td><td class="n">${x.r30}%</td><td class="n">${x.r50}%</td><td class="n"><strong style="font-size:15px;color:${x.ok?'#c0453f':'#3f6aa8'}">${x.r60}%</strong>（${x.in60}名）</td><td class="n">${x.t}%</td><td>${jd(x)}</td></tr>`).join('')}</tbody></table>`;
+    cM=['### コース別の完了率と目標への進捗','',`| コース | 対象 | 完了率 | 30日以内 | 50日以内 | 60日以内 | 目標 | 目標に対して |`,'|---|---:|---:|---:|---:|---:|---:|---|',...R.map(x=>`| ${x.k} | ${x.n}名 | ${pc(x.done,x.n)}% | ${x.r30}% | ${x.r50}% | **${x.r60}%** | ${x.t}% | ${x.ok?'✅ 達成':(el<60?'進行中':'❌ 未達')}${x.ok?'':'・あと'+x.need+'名'} |`),''];}
+  // 全体のファネル（STEPごとに完了した人数）
+  if(B.stepFunnel&&B.stepFunnel.length){const F=B.stepFunnel,N=B.total.n;
+    let mx=0,mi=-1;F.forEach((v,i)=>{const pv=i?F[i-1]:N;const dr=pv-v;if(dr>mx){mx=dr;mi=i;}});
+    cH+=`<h3>全体のファネル（STEPごと）</h3>`+(()=>{const _m0=IMGS.length;return shot(`<div style="font-family:'Noto Sans JP',sans-serif;padding:8px 4px;">${F.map((v,i)=>{const pv=i?F[i-1]:N,dr=pv-v,w=N?v/N*100:0,big=i===mi;return `<div style="display:flex;align-items:center;gap:10px;margin:3px 0;"><span style="flex:0 0 64px;font-size:12.5px;font-weight:700;color:${big?'#3f6aa8':'#1d1f29'};">STEP${i+1}</span><span style="flex:1;height:18px;background:#eef0f3;border-radius:4px;overflow:hidden;"><span style="display:block;height:100%;width:${w}%;background:${big?'#3f6aa8':'#9aa6bd'};"></span></span><span style="flex:0 0 150px;text-align:right;font-size:12.5px;font-feature-settings:'tnum' 1;"><strong>${v}名</strong>（${pc(v,N)}%）${dr>0?`<span style="color:${big?'#3f6aa8':'#6c707b'};font-weight:${big?800:400};"> −${dr}</span>`:''}</span></div>`;}).join('')}</div>`,'STEPファネル');})()+(mi>=0?`<p>最も人が減るのは<strong style="color:#3f6aa8;">${mi?`STEP${mi}→STEP${mi+1}`:'開始→STEP1'}</strong>（${mx}名）。ここで止まっている人への声かけを優先する。</p>`:'');
+    cM.push('### 全体のファネル（STEPごと）','','@@SHOT@@','','| STEP | 完了した人 | 割合 | 前のSTEPから |','|---|---:|---:|---:|',...F.map((v,i)=>`| STEP${i+1} | ${v}名 | ${pc(v,N)}% | ${i?'−'+(F[i-1]-v):'−'+(N-v)} |`),'');}
+  const ps=[...B.progs,B.total];
+  const t1=`<table><thead><tr><th>プログラム</th><th class="n">対象</th><th class="n">完了</th><th class="n">完了率</th><th class="n">60日以内完了</th><th class="n">60日以内完了率</th></tr></thead><tbody>${ps.map(p=>`<tr${p.label==='合計'?' style="font-weight:800"':''}><td>${p.label}</td><td class="n">${p.n}名</td><td class="n">${p.done}名</td><td class="n">${pc(p.done,p.n)}%</td><td class="n">${p.in60}名</td><td class="n">${pc(p.in60,p.n)}%</td></tr>`).join('')}</tbody></table>`;
+  const keys=[...new Set(ps.flatMap(p=>Object.keys(p.stuck).map(Number)))].sort((a,b)=>a-b);
+  const lb=k=>k===0?'未着手':`STEP${k}まで完了`;
+  const t2=keys.length?`<table><thead><tr><th>止まっている段階</th>${ps.map(p=>`<th class="n">${p.label}</th>`).join('')}</tr></thead><tbody>${keys.map(k=>`<tr><td>${lb(k)}</td>${ps.map(p=>`<td class="n"${p.label==='合計'?' style="font-weight:800"':''}>${p.stuck[k]?p.stuck[k]+'名':'—'}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'<p class="note">未完了の人はいません</p>';
+  // 多い段階を文章で
+  const top=keys.map(k=>[k,B.total.stuck[k]||0]).sort((a,b)=>b[1]-a[1]).slice(0,3).filter(x=>x[1]>0);
+  const rest=B.total.n-B.total.done;
+  const txt=top.length?`未完了${rest}名のうち、最も多く止まっているのは${top.map(([k,v])=>`${lb(k)}（${v}名）`).join('、')}。`:'';
+  const html=cH+`<h3>プログラム別の完了状況</h3><p class="note">${B.startYm.replace('/','年')}月にプログラムを開始した人（完了＝新はSTEP18、②はSTEP18-2）</p>${t1}
+    <h3>どのSTEPで止まっているか</h3><p class="note">未完了の人が最後に完了したSTEP</p>${t2}${txt?`<p>${txt}</p>`:''}`;
+  const md=[...cM,'### プログラム別の完了状況','','| プログラム | 対象 | 完了 | 完了率 | 60日以内完了 | 60日以内完了率 |','|---|---:|---:|---:|---:|---:|',
+    ...ps.map(p=>`| ${p.label} | ${p.n}名 | ${p.done}名 | ${pc(p.done,p.n)}% | ${p.in60}名 | ${pc(p.in60,p.n)}% |`),'',
+    '### どのSTEPで止まっているか','',`| 止まっている段階 | ${ps.map(p=>p.label).join(' | ')} |`,`|---|${ps.map(()=>'---:').join('|')}|`,
+    ...keys.map(k=>`| ${lb(k)} | ${ps.map(p=>p.stuck[k]?p.stuck[k]+'名':'—').join(' | ')} |`),'',txt,''];
+  return {html,md};
+}
+// ── 今後のアプローチ（10月卒業以降）──
+// 残り45日以下の月は、間に合う層（あと一歩の層）への押し上げだけに絞る。手前の段階の改善や投稿ペースの話は「今後の卒業生に活かすこと」に回す
+function approach(c){
+  const isP1=c.phase==='prep'||c.phase==='phase1',L0=c.daysLeft||0;
+  if(isP1||L0>45)return approach0(c);
+  const out=[],nr=Object.assign({},c.near||{}),G=c.gm3k||{};
+  // 卒業日を過ぎた生徒にはアプローチできないので、在籍中の生徒だけで数える
+  const _nk=s=>String(s||'').replace(/[\s　]/g,'');
+  const _all=[];Object.values(c.tiers||{}).forEach(L=>(L||[]).forEach(r=>_all.push(r)));
+  const _act=new Set(_all.filter(r=>!r[14]).map(r=>_nk(r[0])));const _grad=_all.filter(r=>r[14]).length;
+  const _useAct=_all.length>0;
+  const T=(G.targets||[]).filter(t=>!_useAct||_act.has(_nk(t.name)));
+  if(_useAct)nr.mk=((c.tiers||{}).r5||[]).filter(r=>!r[14]&&(r[1]||0)>=8000).length;
+  const fk=c.finalKgi!=null?c.finalKgi:(c.targets&&c.targets.mk);
+  const need=fk!=null?Math.max(0,Math.ceil(c.n*fk/100)-c.cur.mk):null;
+  const t5=T.filter(t=>t.stage==='5,000人'),t3=T.filter(t=>t.stage!=='5,000人');
+  if(need!=null)out.push(`<strong>目標まであと${need}名</strong>：卒業時の目標${fk}%（${c.cur.mk+need}名）に対し今は${c.cur.mk}名。${_useAct&&_grad?`アプローチできるのは在籍中の${_act.size}名（卒業済みの${_grad}名は対象外）。`:''}残り${L0}日で届くのは、すでに3,000人以上いる在籍中の生徒だけ。${T.length?`対象は${T.length}名（5,000人以上${t5.length}名・3,000〜4,999人${t3.length}名）。`:''}${T.length<need?`<strong style="color:#3f6aa8;">対象が${need}名に足りないため、目標達成は難しい。</strong>`:''}`);
+  if(t5.length)out.push(`<strong>5,000人以上の${t5.length}名を最優先で押し上げる</strong>：${t5.slice(0,6).map(t=>`${esc(t.name)}（${esc(t.genre||'—')}）`).join('、')}${t5.length>6?' ほか':''}。担当講師から、同じジャンルで伸びた過去の生徒の投稿を共有し、伸びた型の投稿をもう一度出す。`);
+  if(t3.length)out.push(`<strong>3,000〜4,999人の${t3.length}名は「伸びた投稿の再現」に絞る</strong>：新しい企画を考えるより、これまでで一番伸びた投稿と同じ構成・テーマで出し直す方が、残り${L0}日で届く可能性が高い。`);
+  if(nr.mk)out.push(`<strong>8,000〜9,999人の${nr.mk}名は毎週状況を確認する</strong>：1本伸びれば届く層なので、投稿予定を週ごとに確認し、出し漏れを防ぐ。`);
+  if(!out.length)out.push(`残り${L0}日で万垢に届く層（3,000人以上）がいないため、今月の上積みは見込みにくい。下の「今後の卒業生に活かすこと」を優先する。`);
+  return out.slice(0,3);
+}
+// フェーズ1の60日以内完了率：p1 が無い記録でも、プログラム別の集計（progBreak）から出す
+function p1Of(c){if(!c)return null;if(c.p1)return c.p1;const t=c.progBreak&&c.progBreak.total;if(!t||!t.n)return null;return {pct:+(t.in60/t.n*100).toFixed(1),n:t.in60,dn:t.n};}
+function approach0(c){
+  const L=[],isP1=c.phase==='prep'||c.phase==='phase1';
+  if(isP1){
+    const p=p1Of(c),tg=c.targets.npp||50;
+    if(p){const need=Math.max(0,Math.ceil(p.dn*tg/100)-p.n);L.push(need?`新投稿プログラムの60日以内完了率は${p.pct}%。目標${tg}%まであと${need}名。停滞・つまずき中の生徒への毎週の声かけを優先する。`:`新投稿プログラムの60日以内完了率は${p.pct}%で目標達成。完了者を初投稿→月◯投稿へつなぐ段階に移る。`);}
+    L.push('過去データでは、初回HRから60日以内に初投稿した人の万垢率はそれ以外の約3倍。この時期は「初投稿までの速さ」を最優先にする。');
+  }else{
+    // ボトルネックとあと一歩の層
+    const bench=CUR.bench||{};let prev=c.n,worst=null;
+    stages(c).forEach(([k,lb,pl])=>{const v=prev?+(c.cur[k]/prev*100).toFixed(1):null;const b=bench[BK[k]];const ref=b?(k==='fp'?b.abs:b.rel):null;if(v!=null&&ref!=null){const g=v-ref;if(!worst||g<worst.g)worst={lb,pl,v,ref,g};}prev=c.cur[k]});
+    if(worst&&worst.g<0)L.push(/^(初投稿|100人)$/.test(worst.lb)
+      ?`<strong>最優先の段階：${worst.pl}→${worst.lb}</strong>。通過率${worst.v}%（基準${worst.ref}%）。まだ伸ばす段階の前なので、${worst.lb==='初投稿'?'初投稿の着手支援（投稿日を決めて声かけ・作業の伴走）':'投稿の継続支援（週2投稿のペースづくり）'}をMGと講師で分担して集中的に行う。`
+      :`<strong>最優先の段階：${worst.pl}→${worst.lb}</strong>。通過率${worst.v}%（基準${worst.ref}%）。この段階の生徒に伸ばし方（企画・ジャンル設計）の個別フィードバックを集中させる。`);
+    const nr=c.near||{};const nearTxt=[['mk','8,000〜9,999人'],['r5','4,000〜4,999人'],['r3','2,500〜2,999人'],['r1','800〜999人']].filter(([k])=>nr[k]).map(([k,lb])=>`${lb}：${nr[k]}名`);
+    if(nearTxt.length)L.push(`<strong>あと一歩の層</strong>（${nearTxt.join('／')}）を優先して押し上げる。次の段階に上がる確率が最も高く、KPIに直結する。`);
+    // コーチング（MG）＝投稿量
+    const pt=PHASE_POSTS[c.phase];
+    const crs=(c.attr&&c.attr.course)||[];const tk=crs.find(x=>x.k==='特進'),bs=crs.find(x=>x.k==='ベーシック');
+    L.push(`<strong>コーチング（MG）</strong>：投稿量を増やすのがMGの役割。未投稿が${c.noPost}名（${pc(c.noPost,c.n)}%）${pt&&c.postMed!=null?`、投稿数の中央値は${c.postMed}投稿（この時期の目安${pt}投稿）`:''}。${pt&&c.postMed!=null&&c.postMed<pt?`目安まで${pt-c.postMed}投稿足りないため、週${Math.max(2,Math.ceil((pt-c.postMed)/Math.max(1,Math.round(c.daysLeft/7))))}投稿ペースをMGから具体的に指示する。`:'目安には届いているので、投稿の質（講師側）に重心を移す。'}${tk&&bs?`特進の万垢率は${tk.rate}%、ベーシックは${bs.rate}%で、MGが付くことによる差が出ている。ベーシックは着手支援（初投稿・10投稿まで）を厚くする。`:''}`);
+    // 投稿数の平均が少ないMG
+    const mg=(c.byMg||[]).filter(x=>x.avg!=null);
+    if(mg.length>=3){
+      const all=mg.reduce((s,x)=>s+x.avg*x.n,0)/mg.reduce((s,x)=>s+x.n,0);
+      const low=mg.slice().sort((a,b)=>a.avg-b.avg).slice(0,3);
+      const top=mg.slice().sort((a,b)=>b.avg-a.avg)[0];
+      L.push(`<strong>投稿数の平均が少ないMG</strong>：${low.map(x=>`${x.k}（平均${x.avg}投稿・未投稿${x.noPost}/${x.n}名）`).join('、')}。MG全体の平均は${all.toFixed(1)}投稿。この担当の生徒には週の投稿本数を決めて進捗を確認する。${top?`最も多いのは${top.k}（平均${top.avg}投稿）で、その声かけのやり方を共有する。`:''}`);
+    }
+    // サポマネ
+    const sp=(c.bySup||[]).filter(x=>!/未設定/.test(x.k));
+    if(sp.length){
+      const w=sp.slice().sort((a,b)=>(b.noPost/b.n)-(a.noPost/a.n)).slice(0,3);
+      const g=sp.slice().sort((a,b)=>(b.mk/b.n)-(a.mk/a.n))[0];
+      L.push(`<strong>サポマネ</strong>：未投稿の割合が高いのは${w.map(x=>`${x.k}担当（${pc(x.noPost,x.n)}%・${x.noPost}/${x.n}名）`).join('、')}。この担当講師のクラスを重点的に確認し、講師とMGの連携（未投稿者リストの共有・声かけの分担）を整える。${g?`万垢率が最も高いのは${g.k}担当（${pc(g.mk,g.n)}%）で、その運営を他のサポマネに横展開する。`:''}`);
+    }
+    if(c.speed&&CUR.past){const P=CUR.past.filter(x=>x.n>=50);const fa=P.reduce((s,x)=>s+x.fp60,0)/(P.length||1);if(c.speed.fp60<fa-3)L.push(`<strong>立ち上がり</strong>：60日以内の初投稿率が${c.speed.fp60}%と過去平均を下回っている。後続の卒業月では、初回HR直後の初投稿支援を前倒しで行う。`);}
+  }
+  return L;
+}
+// ── 万垢につながる2つの条件（60日以内の初投稿＝プログラム完了、30投稿以上）の達成チェック ──
+function ksfRows(c){
+  const s=c.stats;if(!s||!s.factors)return [];
+  const pick={f60:'60日以内のプログラム完了（初投稿）',p30:'30投稿以上'};
+  return s.factors.filter(f=>pick[f.key]).map(f=>{
+    const prog=f.key==='p30'&&(c.daysLeft||0)>0;
+    const need=Math.max(0,Math.ceil(c.n*f.prevPast/100)-Math.round(c.n*f.prevCur/100));
+    const ok=f.prevCur>=f.prevPast;
+    return {lb:pick[f.key],cur:f.prevCur,past:f.prevPast,d:+(f.prevCur-f.prevPast).toFixed(1),rw:f.rw,rwo:f.rwo,rr:f.rr,p:f.p,ok,prog,need};});
+}
+function ksfHtml(c){
+  const R=ksfRows(c);if(!R.length)return '';
+  const okN=R.filter(x=>x.ok).length;
+  const st=x=>x.ok?'<span style="background:#c0453f;color:#fff;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:800;">✓ 達成</span>':(x.prog?`<span style="background:#a8792b;color:#fff;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:800;">進行中・あと${x.need}名</span>`:`<span style="background:#3f6aa8;color:#fff;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:800;">× 未達</span>`);
+  return `<div style="border:2px solid #c0453f;border-radius:10px;padding:12px 16px;margin:10px 0 14px;background:#fffafa;">
+   <p style="font-size:15px;font-weight:800;margin:0 0 8px;">✅ 万垢につながる条件：${okN}/${R.length}項目 達成</p>
+   <table style="width:100%;margin:0;"><thead><tr><th>条件</th><th class="n">今の達成率</th><th class="n">目安（過去の平均）</th><th class="n">差</th><th>判定</th></tr></thead><tbody>${R.map(x=>`<tr><td><strong>${x.lb}</strong><div style="font-size:11px;color:#6c707b;">満たした人の万垢率 ${x.rw}%／満たさない人 ${x.rwo}%（${x.rr}倍）</div></td><td class="n"><strong style="font-size:16px;">${x.cur}%</strong></td><td class="n">${x.past}%</td><td class="n"><strong style="color:${x.d>=0?'#c0453f':'#3f6aa8'};">${x.d>0?'+':''}${x.d}pt</strong></td><td>${st(x)}</td></tr>`).join('')}</tbody></table>
+   ${R.some(x=>x.prog)?'<p class="note" style="margin:6px 0 0;">30投稿以上は卒業まで増えるため、進行中の月は「目安まであと何名か」で追う。</p>':''}</div>`;
+}
+function ksfMd(c){
+  const R=ksfRows(c);if(!R.length)return [];
+  return [`> ✅ **万垢につながる条件：${R.filter(x=>x.ok).length}/${R.length}項目 達成**`,'','| 条件 | 今の達成率 | 目安（過去の平均） | 差 | 判定 |','|---|---:|---:|---:|---|',
+    ...R.map(x=>`| **${x.lb}** | **${x.cur}%** | ${x.past}% | ${x.d>0?'+':''}${x.d}pt | ${x.ok?'✅ 達成':(x.prog?`進行中・あと${x.need}名`:'❌ 未達')} |`),''];
+}
+// ── クロス別分析（属性・属性の掛け合わせ）と、有意なもののボトルネック分析 ──
+function crossData(c){
+  const A=c.attr||{},L=[];
+  [['age','年代'],['job','職業'],['course','コース']].forEach(([k,lb])=>(A[k]||[]).forEach(g=>{
+    if(g.fpP!=null&&g.fpP<0.1)L.push({kind:'属性',k:`${lb}：${g.k}`,m:'初投稿完了率',n:g.n,rate:g.fpRate,diff:g.fpDiff,p:g.fpP});
+    if(g.p!=null&&g.p<0.1){const base=c.n?c.cur.mk/c.n*100:0;L.push({kind:'属性',k:`${lb}：${g.k}`,m:'万垢率',n:g.n,rate:g.rate,diff:+(g.rate-base).toFixed(1),p:g.p});}}));
+  (c.crossFp||[]).forEach(x=>L.push({kind:'掛け合わせ',k:x.k,m:'初投稿完了率',n:x.n,rate:x.rate,diff:x.diff,p:x.p}));
+  (c.cross||[]).forEach(x=>L.push({kind:'掛け合わせ',k:x.k,m:'万垢率',n:x.n,rate:x.rate,diff:x.diff,p:x.p}));
+  const bad=L.filter(x=>x.diff<0).sort((a,b)=>a.diff*a.n-b.diff*b.n);
+  const good=L.filter(x=>x.diff>0).sort((a,b)=>b.diff*b.n-a.diff*a.n);
+  return {L,bad,good};
+}
+function crossHtml(c){
+  window._crossC=c;c.__gf=[];
+  const D=crossData(c);if(!D.L.length)return '';
+  const row=x=>`<tr><td>${x.kind}</td><td><strong>${esc(x.k)}</strong></td><td>${x.m}</td><td class="n">${x.n}名</td><td class="n"><strong>${x.rate}%</strong></td><td class="n"><strong style="color:${x.diff>=0?'#c0453f':'#3f6aa8'};">${x.diff>0?'+':''}${x.diff}pt</strong></td><td class="n">★${x.p<0.001?'&lt;0.001':x.p}</td></tr>`;
+  const tb=a=>`<table><thead><tr><th>種類</th><th>区分・組み合わせ</th><th>指標</th><th class="n">対象</th><th class="n">率</th><th class="n">差</th><th class="n">p値</th></tr></thead><tbody>${a.map(row).join('')}</tbody></table>`;
+  let h=`<h3>クロス別分析</h3><p class="note">年代・職業・コースと、その掛け合わせ（ジャンルを含む）のうち、初投稿完了率・万垢率がその他の生徒と有意に違うもの（★＝p&lt;0.1）</p>`;
+  if(D.bad.length){
+    h+=`<p><strong>ボトルネック（全体より有意に低い層）</strong></p>`+tb(D.bad.slice(0,8));
+    const L=c.daysLeft||0;
+    const top=D.bad.slice(0,3).map(x=>{const lost=Math.round(x.n*(-x.diff)/100);const fp=x.m==='初投稿完了率';
+      const notYet=fp?Math.round(x.n*(100-x.rate)/100):null;
+      const why=fp?`${x.n}名中、まだ初投稿していない人が<strong>約${notYet}名</strong>。万垢より手前の「投稿を始める」段階で止まっている`:`${x.n}名中、万垢は${Math.round(x.n*x.rate/100)}名。投稿は始めていても、フォロワーが伸びる段階で止まっている`;
+      const now=fp?(L<=45?`残り${L}日では初投稿から万垢まで届かないため、<strong>今月の挽回ではなく次の卒業生での対策</strong>に回す`:`残り${L}日あるので、未投稿の${notYet}名への着手支援で挽回できる`):(L<=45?`残り${L}日では、この層のうち3,000人以上にいる人に絞って押し上げる`:`伸びている生徒の投稿の型をこの層に共有する`);
+      return `<p style="margin:8px 0 2px;"><strong>▼ ${esc(x.k)}</strong>（${x.m} ${x.rate}%／その他より<span style="color:#3f6aa8;font-weight:800;">${x.diff}pt</span>／p=${x.p<0.001?'&lt;0.001':x.p}）</p>
+        <p style="margin:0 0 0 1.1em;">・何が起きているか：${why}</p>
+        <p style="margin:0 0 0 1.1em;">・影響：この層がその他並みなら<strong>約${lost}名</strong>多く${fp?'初投稿':'万垢'}に届く</p>
+        <p style="margin:0 0 0 1.1em;">・対応：${now}</p>${grpFunnel(c,x.k)}`;}).join('');
+    h+=`<div style="border-left:4px solid #3f6aa8;background:#f5f8fc;border-radius:0 8px 8px 0;padding:10px 14px;margin:6px 0 12px;"><p><strong>ボトルネック分析</strong>（影響の大きい順＝差×人数）</p>${top}</div>`;
+  }
+  if(D.good.length)h+=`<p><strong>強み（全体より有意に高い層）</strong></p>`+tb(D.good.slice(0,6));
+  return h;
+}
+// ボトルネックの層のファネル（その層とその他の生徒の到達率を並べる）
+function grpFunnel(c,k){
+  const S=c.stu;if(!S||!S.length){(c.__gf=c.__gf||[]).push(false);return '';}
+  const parts=k.replace(/^(年代|職業|コース)：/,'').split('×');
+  const inG=r=>parts.every(p=>r[0]===p||r[1]===p||r[2]===p||r[3]===p);
+  const G=S.filter(inG),O=S.filter(r=>!inG(r));if(G.length<3){c.__gf.push(false);return '';}c.__gf.push(true);
+  const ST=[['対象者',0],['初投稿',1],['100人',2],['1,000人',4],['3,000人',8],['5,000人',16],['万垢',32]];
+  const cnt=(L,b)=>b?L.filter(r=>r[4]&b).length:L.length;
+  let worst=null,prevG=G.length,prevO=O.length;
+  const rows=ST.map(([lb,b],i)=>{const g=cnt(G,b),o=cnt(O,b);const gp=+(g/G.length*100).toFixed(1),op=O.length?+(o/O.length*100).toFixed(1):0;
+    const tg=i?(prevG?g/prevG*100:0):100,to=i?(prevO?o/prevO*100:0):100;const gap=+(tg-to).toFixed(1);if(i&&(worst==null||gap<worst.gap))worst={i,gap,lb,pl:ST[i-1][0]};prevG=g;prevO=o;return {lb,g,gp,op,tg:+tg.toFixed(1),to:+to.toFixed(1)};});
+  const html=`<div style="font-family:'Noto Sans JP',sans-serif;border:1px solid #e3e6eb;border-radius:10px;padding:12px 14px;background:#fff;">
+    <div style="font-size:13px;font-weight:800;margin-bottom:6px;">${esc(k)}のファネル（${G.length}名）<span style="font-weight:600;color:#6c707b;font-size:11px;margin-left:6px;">色の棒＝この層、灰色の線＝その他の生徒（${O.length}名）</span></div>
+    ${rows.map((r,i)=>{const bad=worst&&i===worst.i;return `<div style="display:flex;align-items:center;gap:8px;margin:3px 0;"><span style="flex:0 0 60px;font-size:12px;font-weight:700;color:${bad?'#3f6aa8':'#1d1f29'};">${r.lb}</span><span style="flex:1;position:relative;height:16px;background:#eef0f3;border-radius:4px;"><span style="position:absolute;left:0;top:0;bottom:0;width:${r.gp}%;background:${bad?'#3f6aa8':'#c0762e'};border-radius:4px;"></span><span style="position:absolute;top:-3px;bottom:-3px;left:${r.op}%;width:2px;background:#6c707b;"></span></span><span style="flex:0 0 200px;font-size:11.5px;text-align:right;font-feature-settings:'tnum' 1;"><strong>${r.g}名（${r.gp}%）</strong><span style="color:#6c707b;">／その他 ${r.op}%</span></span></div>`;}).join('')}
+    ${worst&&worst.gap<0?`<div style="font-size:12px;margin-top:6px;">最も差が開くのは<strong style="color:#3f6aa8;">${worst.pl}→${worst.lb}</strong>（通過率 ${rows[worst.i].tg}%／その他 ${rows[worst.i].to}%）</div>`:''}</div>`;
+  return `<div style="margin:6px 0 10px 1.1em;">${shot(html,k+'のファネル')}</div>`;
+}
+function crossMd(c){
+  const D=crossData(c);if(!D.L.length)return [];
+  const tb=a=>['| 種類 | 区分・組み合わせ | 指標 | 対象 | 率 | 差 | p値 |','|---|---|---|---:|---:|---:|---:|',...a.map(x=>`| ${x.kind} | **${x.k}** | ${x.m} | ${x.n}名 | ${x.rate}% | ${x.diff>0?'+':''}${x.diff}pt | ${x.p<0.001?'<0.001':x.p} |`),''];
+  const out=['### クロス別分析',''];
+  if(D.bad.length){const L=c.daysLeft||0;out.push('**ボトルネック（全体より有意に低い層）**','',...tb(D.bad.slice(0,8)),'**ボトルネック分析**（影響の大きい順＝差×人数）','');
+    D.bad.slice(0,3).forEach((x,ix)=>{const lost=Math.round(x.n*(-x.diff)/100),fp=x.m==='初投稿完了率',notYet=fp?Math.round(x.n*(100-x.rate)/100):null;
+      const why=fp?`${x.n}名中、まだ初投稿していない人が**約${notYet}名**。万垢より手前の「投稿を始める」段階で止まっている`:`${x.n}名中、万垢は${Math.round(x.n*x.rate/100)}名。投稿は始めていても、フォロワーが伸びる段階で止まっている`;
+      const now=fp?(L<=45?`残り${L}日では初投稿から万垢まで届かないため、**今月の挽回ではなく次の卒業生での対策**に回す`:`残り${L}日あるので、未投稿の${notYet}名への着手支援で挽回できる`):(L<=45?`残り${L}日では、この層のうち3,000人以上にいる人に絞って押し上げる`:'伸びている生徒の投稿の型をこの層に共有する');
+      out.push(`**▼ ${x.k}**（${x.m} ${x.rate}%／その他より${x.diff}pt／p=${x.p<0.001?'<0.001':x.p}）`,'',`- 何が起きているか：${why}`,`- 影響：この層がその他並みなら**約${lost}名**多く${fp?'初投稿':'万垢'}に届く`,`- 対応：${now}`,(c.__gf&&c.__gf[ix]?'@@SHOT@@':''),'');});}
+  if(D.good.length)out.push('**強み（全体より有意に高い層）**','',...tb(D.good.slice(0,6)));
+  return out;
+}
+// ── 分布：初回HRから初投稿（プログラム完了）までの日数・投稿数 ──
+function distChart(title,bins,lab,mark,hi,ref){
+  const mx=Math.max(1,...bins,...(ref||[]));
+  return `<div style="width:100%;border:1px solid #e3e6eb;border-radius:12px;padding:16px 18px;background:#fff;box-sizing:border-box;">
+   <div style="font-size:15px;font-weight:800;margin-bottom:12px;">${title}</div>
+   <div style="display:flex;align-items:flex-end;gap:4px;height:220px;border-bottom:1px solid #cfd3da;">${bins.map((v,i)=>{const on=hi(i);return `<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;"><div style="font-size:11px;font-weight:700;color:#4a4f5e;margin-bottom:3px;">${v||''}</div><div style="width:100%;height:${v/mx*180}px;background:${on?'#c0453f':'#9aa6bd'};border-radius:3px 3px 0 0;position:relative;">${ref?`<div title="過去平均" style="position:absolute;left:-2px;right:-2px;bottom:${(ref[i]-v)/mx*180+(v/mx*180)}px;height:0;border-top:2.5px solid #1d1f29;"></div>`:''}</div></div>`;}).join('')}</div>
+   <div style="display:flex;gap:4px;margin-top:5px;">${bins.map((v,i)=>`<div style="flex:1;min-width:0;text-align:center;font-size:10.5px;color:#6c707b;white-space:nowrap;">${lab(i)}</div>`).join('')}</div>
+  </div>`;
+}
+function distHtml(c,m){
+  const D=c.dist2;if(!D)return '';
+  const dl=D.days.length-1,pl=D.posts.length-1,P=D.past;
+  // 過去の分布を今月の人数に換算（線で表示）
+  const scale=a=>P?a.map(v=>+(v/P.n*D.n).toFixed(1)):null;
+  const cum=(a,k,N)=>+(a.slice(0,k).reduce((x,y)=>x+y,0)/N*100).toFixed(1),up=(a,k,N)=>+(a.slice(k).reduce((x,y)=>x+y,0)/N*100).toFixed(1);
+  const rowsD=[[30,6],[45,9],[60,12],[90,18]].map(([d,k])=>({lb:`${d}日以内に初投稿`,cur:cum(D.days,k,D.n),past:P?cum(P.days,k,P.n):null}));
+  const rowsP=[[10,2],[20,4],[30,6],[50,10]].map(([t,k])=>({lb:`${t}投稿以上`,cur:up(D.posts,k,D.n),past:P?up(P.posts,k,P.n):null,p120:P&&P.n120?up(P.posts120,k,P.n120):null,p150:P&&P.n150?up(P.posts150,k,P.n150):null}));
+  const tb=(rows,note)=>`<table style="margin:8px 0 0;"><thead><tr><th>区切り</th><th class="n">今月</th><th class="n">過去の卒業生</th><th class="n">差</th><th>判定</th></tr></thead><tbody>${rows.map(r=>{const d=r.past==null?null:+(r.cur-r.past).toFixed(1);const ok=d!=null&&d>=0;return `<tr><td><strong>${r.lb}</strong></td><td class="n"><strong style="font-size:15px;">${r.cur}%</strong></td><td class="n">${r.past??'—'}%</td><td class="n"><strong style="color:${d==null?'inherit':(ok?'#c0453f':'#3f6aa8')};">${d==null?'—':(d>0?'+':'')+d+'pt'}</strong></td><td>${d==null?'—':(ok?'<strong style="color:#c0453f">✓ 過去以上</strong>':'<strong style="color:#3f6aa8">× 過去より低い</strong>')}</td></tr>`;}).join('')}</tbody></table>${note?`<p class="note" style="margin:4px 0 0;">${note}</p>`:''}`;
+  const el=180-(c.daysLeft||0),ref=el<=135?'p120':(el<=165?'p150':'past');
+  const refLb={p120:'過去（4ヶ月目時点）',p150:'過去（5ヶ月目時点）',past:'過去（卒業時点）'}[ref];
+  const tbP=rows=>`<table style="margin:8px 0 0;"><thead><tr><th>区切り</th><th class="n">今月（経過${el}日）</th><th class="n">過去（4ヶ月目時点）</th><th class="n">過去（5ヶ月目時点）</th><th class="n">過去（卒業時点）</th><th class="n">差（${refLb}比）</th><th>判定</th></tr></thead><tbody>${rows.map(r=>{const b=r[ref];const d=b==null?null:+(r.cur-b).toFixed(1);const ok=d!=null&&d>=0;const cl=k=>`<td class="n"${k===ref?' style="font-weight:800;background:#f5f7fa;"':''}>${r[k]??'—'}%</td>`;return `<tr><td><strong>${r.lb}</strong></td><td class="n"><strong style="font-size:15px;">${r.cur}%</strong></td>${cl('p120')}${cl('p150')}${cl('past')}<td class="n"><strong style="color:${d==null?'inherit':(ok?'#c0453f':'#3f6aa8')};">${d==null?'—':(d>0?'+':'')+d+'pt'}</strong></td><td>${d==null?'—':(ok?'<strong style="color:#c0453f">✓ 過去以上</strong>':'<strong style="color:#3f6aa8">× 過去より低い</strong>')}</td></tr>`;}).join('')}</tbody></table><p class="note" style="margin:4px 0 0;">過去の卒業生は、初回HRから120日（4ヶ月目）・150日（5ヶ月目）時点の投稿数（投稿数シートの投稿日から集計${P&&P.n120?`・${P.n120}名`:''}）。差は今月の経過日数に近い時点（灰色の列）と比べています。</p>`;
+  const leg='';
+  return `<div style="display:flex;flex-direction:column;gap:12px;margin:8px 0 14px;">
+    <div>${distChart(`プログラム完了（初投稿）までの日数の分布（人数）<div style="font-size:11px;font-weight:600;color:#6c707b;">初回HRからの日数・5日ごと／赤＝60日以内／未完了 ${D.noFp}名</div>`,D.days,i=>i===dl?`${i*5}〜`:`${i*5}`,null,i=>i<12,null)}
+      ${tb(rowsD,'割合はその月の卒業生全員が分母。過去の卒業生は卒業日までの実績。')}</div>
+    <div>${distChart(`投稿数の分布（人数）<div style="font-size:11px;font-weight:600;color:#6c707b;">5投稿ごと／赤＝30投稿以上${D.noPost?`／投稿数データなし ${D.noPost}名`:''}</div>`,D.posts,i=>i===pl?`${i*5}〜`:`${i*5}`,null,i=>i>=6,null)}
+      ${tbP(rowsP)}</div>
+  </div>`;
+}
+function tierUp(c){
+  const T=[['r1','1,000人以上'],['r3','3,000人以上'],['r5','5,000人以上']].filter(([k])=>c.cur[k]!=null);
+  if(!T.length)return {html:'',md:[]};
+  const R=T.map(([k,lb])=>{const v=c.cur[k],p=c.prev&&c.prev[k]!=null?c.prev[k]:null,d=p!=null?v-p:null,tg=c.targets&&c.targets[k];return {lb,v,d,r:pc(v,c.n),tg};});
+  const html=`<table style="margin:6px 0 10px;"><thead><tr><th>到達段階</th><th class="n">人数</th><th class="n">率</th><th class="n">先週から</th><th class="n">目標</th></tr></thead><tbody>${R.map(x=>`<tr><td><strong>${x.lb}</strong></td><td class="n">${x.v}名</td><td class="n">${x.r}%</td><td class="n"><strong style="color:${x.d>0?'#c0453f':(x.d<0?'#3f6aa8':'inherit')};">${x.d==null?'—':(x.d>0?'+':'')+x.d+'名'}</strong></td><td class="n">${x.tg!=null?x.tg+'%':'—'}</td></tr>`).join('')}</tbody></table>`;
+  const md=['| 到達段階 | 人数 | 率 | 先週から | 目標 |','|---|---:|---:|---:|---:|',...R.map(x=>`| ${x.lb} | ${x.v}名 | ${x.r}% | ${x.d==null?'—':(x.d>0?'+':'')+x.d+'名'} | ${x.tg!=null?x.tg+'%':'—'} |`),''];
+  return {html,md};
+}
+// 先週の万垢率ボード：先週記録したボードがあればそれを使い、無ければ先週の数値で同じデザインのボードを作る
+function prevBoard(c){
+  const rec=_prevHtml(c.ym,'kgi');if(rec)return rec;
+  const n=c.n,mk=c.prev.mk,t=c.targets.mk,fk=c.finalKgi;if(!n||t==null)return '';
+  const r=pc(mk,n),tn=Math.ceil(n*t/100),need=Math.max(0,tn-mk),ok=need===0,w=Math.min(100,tn?mk/tn*100:0);
+  const fn=fk!=null?Math.ceil(n*fk/100):null,fneed=fn!=null?Math.max(0,fn-mk):null;
+  const lb=c.phase==='grad'?'KGI 万垢率':'KPI① 万垢率';
+  return `<div style="background:#223049;color:#fff;border-radius:16px;padding:22px 26px;font-family:'Noto Sans JP',sans-serif;">
+   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+    <div><div style="font-size:20px;font-weight:800;">${lb}<span style="font-size:12px;font-weight:600;color:#c7cdd8;margin-left:8px;">先週時点</span></div>
+     <span style="display:inline-block;margin-top:8px;background:rgba(255,255,255,.14);border-radius:999px;padding:4px 14px;font-size:13px;font-weight:700;">目標 ${t}%</span></div>
+    <span style="background:${ok?'#2f7d5b':'#c0453f'};border-radius:999px;padding:7px 16px;font-size:14px;font-weight:800;white-space:nowrap;">${ok?'✓ 達成':'✕ 未達成'}</span></div>
+   <div style="display:flex;gap:28px;align-items:center;margin-top:14px;">
+    <div style="flex:0 0 auto;"><div style="font-size:64px;font-weight:900;line-height:1;letter-spacing:-2px;">${r}<span style="font-size:30px;">%</span></div><div style="font-size:15px;color:#c7cdd8;margin-top:8px;">${mk} / ${n}人</div></div>
+    <div style="flex:1;">${ok?'<div style="font-size:22px;font-weight:800;color:#f0c54e;">目標達成</div>':`<div style="font-size:14px;color:#dfe3ea;">あと<strong>${need}</strong>人で達成！</div><div style="font-size:15px;color:#dfe3ea;margin-top:8px;">達成まであと <strong style="font-size:34px;color:#f0c54e;margin-left:8px;">${need}人</strong></div>`}
+     <div style="height:12px;background:rgba(255,255,255,.18);border-radius:6px;margin-top:12px;overflow:hidden;"><div style="height:100%;width:${w}%;background:#f0c54e;border-radius:6px;"></div></div>
+     <div style="display:flex;justify-content:space-between;font-size:13px;color:#c7cdd8;margin-top:6px;"><span>${mk}人 (${r}%)</span><span>${tn}人 (${t}%)</span></div></div></div>
+   ${fk!=null&&fk!==t?`<div style="margin-top:16px;border:1px solid rgba(240,197,78,.35);background:rgba(255,255,255,.08);border-radius:10px;padding:10px 16px;font-size:14px;">💡 最終目標<strong style="color:#f0c54e;">${fk}%</strong>まで あと<strong style="color:#f0c54e;">${fneed}</strong>人（${fn}人）</div>`:''}
+  </div>`;
+}
+// 今後の卒業生に活かすこと：クロス別分析で有意に低かった層と、万垢につながる条件の未達から作る
+function futureLessons(c){
+  const out=[],D=crossData(c),R=ksfRows(c);
+  // 他の卒業月でも同じ層・同じ指標で同じ向きの有意差が出ているか
+  const others=(CUR.cohorts||[]).filter(o=>o.ym!==c.ym&&o.phase!=='prep');
+  const same=x=>others.filter(o=>crossData(o).L.some(y=>y.k===x.k&&y.m===x.m&&Math.sign(y.diff)===Math.sign(x.diff))).map(o=>mo(o.ym)+'月');
+  const tag=ms=>`（${ms.join('・')}卒業でも同じ傾向）`;
+  const f60=R.find(x=>/60日/.test(x.lb)),p30=R.find(x=>/30投稿/.test(x.lb));
+  if(f60)out.push(`<strong>60日以内のプログラム完了を最優先で追う</strong>：過去の卒業生全体で、満たした人は${f60.rr}倍万垢しやすい（万垢率${f60.rw}%↔${f60.rwo}%）。今月は${f60.cur}%（目安${f60.past}%）。`);
+  if(p30)out.push(`<strong>30投稿までのペースをフェーズ2〜3で作る</strong>：過去の卒業生全体で、満たした人は${p30.rr}倍万垢しやすい（万垢率${p30.rw}%↔${p30.rwo}%）。卒業前に追いつくのは難しいため、週${2}本のペースをMGから決める。`);
+  D.bad.forEach(x=>{const ms=same(x);if(!ms.length)return;
+    if(x.m==='初投稿完了率')out.push(`<strong>${esc(x.k)}の初投稿を早めに支援する</strong>${tag(ms)}：今月は初投稿完了率${x.rate}%（その他より${-x.diff}pt低い）。入会時にこの層をリスト化し、初回HRから30日以内に個別で着手を確認する。`);
+    else out.push(`<strong>${esc(x.k)}の伸ばし方を見直す</strong>${tag(ms)}：今月は万垢率${x.rate}%（その他より${-x.diff}pt低い）。フェーズ2のうちに講師が企画を個別に確認する。`);});
+  D.good.forEach(x=>{const ms=same(x);if(!ms.length)return;out.push(`<strong>${esc(x.k)}のやり方を横展開する</strong>${tag(ms)}：${x.m}${x.rate}%（その他より+${x.diff}pt）。この層で伸びた生徒の投稿の型を、他の層にも共有する。`);});
+  // 絞り込み：万垢につながる条件は1つ（今月未達のものを優先）＋他の月でも共通するボトルネックを影響の大きい順に2つまで
+  const ks=[f60,p30].filter(Boolean).sort((a,b)=>(a.ok-b.ok)||(b.rr-a.rr))[0];
+  const res=[];
+  if(ks)res.push(ks===f60?`<strong>60日以内のプログラム完了を最優先で追う</strong>：満たした人は${ks.rr}倍万垢しやすい。今月は${ks.cur}%（目安${ks.past}%）。`:`<strong>30投稿までのペースをフェーズ2〜3で作る</strong>：満たした人は${ks.rr}倍万垢しやすい。週${2}本のペースをMGから決める。`);
+  D.bad.filter(x=>same(x).length).slice(0,2).forEach(x=>{const ms=same(x);
+    res.push(x.m==='初投稿完了率'?`<strong>${esc(x.k)}の初投稿を初回HRから30日以内に個別で確認する</strong>${tag(ms)}：初投稿完了率${x.rate}%（その他より${-x.diff}pt低い）。`:`<strong>${esc(x.k)}の企画をフェーズ2のうちに講師が確認する</strong>${tag(ms)}：万垢率${x.rate}%（その他より${-x.diff}pt低い）。`);});
+  return res;
+}
+// ── 本文 ──
+function build(){
+  IMGS=[];
+  const at=new Date(CUR.at),wk=Math.ceil(at.getDate()/7),pa=new Date(CUR.prevAt);
+  const H=SHOTS&&SHOTS.html||{cohorts:{}};
+  let h=`<h1>${String(at.getFullYear()).slice(2)}年${at.getMonth()+1}月${wk}週目_週次会議</h1>`;
+  const q=CUR.quarter,qn=q.months.reduce((s,x)=>s+x.n,0),qm=q.months.reduce((s,x)=>s+x.mk,0),qp=q._prevMk!=null?q._prevMk:q.months.reduce((s,x)=>s+x.mkPrev,0),qt=Math.ceil(qn*q.target/100);
+  h+=`<h2>目標値</h2><p class="arrow">→クオーター達成率:${q.target}%（${qt}人）</p>
+  <p>対象生徒 ${qn}名</p>
+  <p>${md(at)}時点：${pc(qm,qn)}%(${qm}/${qn}名)</p><p class="arrow">→${qm-qp>0?`${qm-qp}名増加！`:(qm-qp<0?`${qp-qm}名減少`:'増加なし')}</p>
+  <p>${md(pa)}時点：${pc(qp,q._prevN??qn)}%（${qp}名/${q._prevN??qn}名）</p>
+  ${shot(H.quarter,'クオーターKGI')}${PSHOTS&&PSHOTS.html&&PSHOTS.html.quarter?`<p class="note">先週（${md(pa)}）</p>`+shot(PSHOTS.html.quarter,'先週'):''}
+  <textarea oninput="setNote('q',this.value)" placeholder="補足（任意）">${esc(note('q'))}</textarea>`;
+  let speedShown=false;
+  CUR.cohorts.forEach(c=>{
+    const m=mo(c.ym),S=H.cohorts[c.ym]||{},isP1=c.phase==='prep'||c.phase==='phase1';
+    h+=`<h2>${m}月卒業生</h2><h3>目標としている内容</h3>`;
+    if(isP1){
+      const p=p1Of(c),pp=PREV&&(PREV.cohorts||[]).find(x=>x.ym===c.ym);const p0=pp?p1Of(pp):null;
+      const _d=p&&p0?p.n-p0.n:null;
+      h+=`<h3>① KPIの現状と予測</h3><p>60日以内プログラム完了率（目標${c.targets.npp||50}%）：<strong>${p?`${p.pct}%（${p.n}/${p.dn}人）`:'—'}</strong>　先週：${p0?`${p0.pct}%（${p0.n}/${p0.dn}人）`:'記録なし'}${_d!=null?`　<strong style="color:${_d>0?'#c0453f':(_d<0?'#3f6aa8':'#6c707b')};">${_d>0?'+':''}${_d}人</strong>`:''}</p>
+      ${shot(S.kgi,m+'月卒業生_KPI')}${prevShot(c.ym,'kgi')}`;
+      {const ap=approach(c).slice(0,3);h+=`<h3>② 包括的アプローチ（月全体への打ち手）</h3>`+(ap.length?`<div class="box">${ap.map(x=>`<p>・${x}</p>`).join('')}</div>`:'<p class="note">大きな打ち手は不要（順調）</p>');}
+      h+=`<h3>③ 個別的アプローチ（生徒ごとの打ち手）</h3>`+stepTierPlan(c,m).replace(/<h3>[^<]*<\/h3>/,'');
+      h+=`<details><summary style="font-size:15px;font-weight:800;margin:16px 0 6px;">その他データ（プログラム別・STEP別の生徒分類）</summary>`+progBreak(c).html+stepTierHtml(c,m)+'</details>';
+    }else{
+      const tg=c.targets;
+      h+=`<div style="background:#fdecec;border-radius:8px;padding:10px 14px;margin:4px 0 10px;">${[['mk','万垢率'],['r5','5000人以上率'],['r3','3000人以上率'],['r1','1000人以上率']].filter(([k])=>tg[k]!=null).map(([k,lb])=>`<p style="margin:2px 0;">${lb}：<strong>${tg[k]}%</strong></p>`).join('')}</div>`;
+      // ① KGI・KPIの現状と予測
+      h+=`<h3>① KGI・KPIの現状と予測</h3>`+progressTbl(c)+shot(S.kgi,m+'月卒業生_万垢率')+(S.landing?`<p><strong>着地見込み（予測）</strong></p>`+shot(S.landing,m+'月卒業生_着地見込み'):'');
+      // ② 包括的アプローチ（月全体）
+      {const ap=approach(c).slice(0,3);h+=`<h3>② 包括的アプローチ（月全体への打ち手）</h3>`+(ap.length?`<div class="box">${ap.map(x=>`<p>・${x}</p>`).join('')}</div>`:'<p class="note">大きな打ち手は不要（順調）</p>');}
+      // ③ 個別的アプローチ（生徒ごと）
+      h+=`<h3>③ 個別的アプローチ（生徒ごとの打ち手）</h3>`+tierPlan(c,m).replace(/<h3>[^<]*<\/h3>/,'');
+      // その他データ
+      h+=`<details><summary style="font-size:15px;font-weight:800;margin:16px 0 6px;">その他データ（原因分析・生徒分類・万垢につながる条件・分布・クロス分析）</summary>`;
+      h+=diagHtml(c,S,m)+tierHtml(c,m)+ksfHtml(c);
+      {const dh=distHtml(c,m);if(dh)h+=shot(dh,m+'月卒業生_分布');}
+      h+=crossHtml(c);
+      h+='</details>';
+      if(false){const ap=approach(c),fu=futureLessons(c),L0=c.daysLeft||0;
+        if(ap.length)h+=`<h3>${m}月卒業生への対応（残り${L0}日）</h3>${ap.map(x=>`<p>・${x}</p>`).join('')}`;
+        if(fu.length)h+=`<h3>今後の卒業生に活かすこと</h3>${fu.map(x=>`<p>・${x}</p>`).join('')}`;}
+      const sp=c.speed&&CUR.past&&CUR.past.length?(()=>{const P=CUR.past.filter(x=>x.n>=50);const fa=P.reduce((s,x)=>s+x.fp60,0)/(P.length||1);return c.speed.fp60-fa<=-3})():false;
+      if(false){
+        h+=`<div class="callout"><span>🔸</span><div><strong>やはり初投稿までの速さが大切</strong><br>初回HRから60日後に投稿したか →この率が高いと、万垢率も高くなる</div></div>
+        <p class="note">資料：卒業月ごとの初回HR〜60日以内初投稿率と万垢率</p>${speedTable().html}`;}
+      h+=`<textarea oninput="setNote('c_${c.ym}',this.value)" placeholder="追記（任意）">${esc(note('c_'+c.ym))}</textarea>`;
+    }
+  });
+  h+=`<h2>報告</h2><textarea oninput="setNote('report',this.value)" placeholder="報告事項">${esc(note('report'))}</textarea>`;
+  return h;
+}
+function render(){
+  const p=document.getElementById('page');
+  if(!CUR){p.innerHTML='<div class="empty">記録がありません。KPIダッシュボードを開いて数十秒待ってから、このページを再読み込みしてください。</div>';return}
+  p.innerHTML=build();mount();
+}
+async function go(){
+  const all=load(LS);KEY=document.getElementById('date').value;CUR=all[KEY]||null;
+  const ks=Object.keys(all).sort();PREV=null;
+  if(CUR){const pk=ks.filter(k=>k<KEY&&(new Date(KEY)-new Date(k))>=4*864e5).pop();PREV=pk?all[pk]:null}
+  if(CUR)applyBase();
+  SHOTS=KEY?await loadShots(KEY):null;
+  {const pk=CUR?ks.filter(k=>k<KEY&&(new Date(KEY)-new Date(k))>=4*864e5).pop():null;PSHOTS=pk?await loadShots(pk):null;}
+  render();
+}
+// 先週の画面（先週の記録がある場合）
+function prevShot(ym,k){const h=PSHOTS&&PSHOTS.html&&PSHOTS.html.cohorts&&PSHOTS.html.cohorts[ym]&&PSHOTS.html.cohorts[ym][k];return h?shot(h,ym+'_先週'):''}
+function _prevHtml(ym,k){return PSHOTS&&PSHOTS.html&&PSHOTS.html.cohorts&&PSHOTS.html.cohorts[ym]&&PSHOTS.html.cohorts[ym][k]}
+// 先週の値：送ってもらった9/16の週次会議資料の数値を基準にする（それより新しい記録があればそちらを優先）
+const BASE={at:'2026-09-16',quarterMk:189,quarterN:1017,cohorts:{'2026/09':65,'2026/10':38,'2026/11':30,'2026/12':15},p1:{'2027/01':{pct:36.7,n:119}}};
+function applyBase(){
+  const base=new Date(BASE.at+'T09:00:00');
+  if(new Date(CUR.at)<=base)return;
+  if(PREV&&new Date(PREV.at)>=base)return;
+  CUR=JSON.parse(JSON.stringify(CUR));
+  CUR.prevAt=base.toISOString();
+  CUR.quarter._prevMk=BASE.quarterMk;CUR.quarter._prevN=BASE.quarterN;
+  (CUR.cohorts||[]).forEach(c=>{if(BASE.cohorts[c.ym]!=null)c.prev.mk=BASE.cohorts[c.ym];});
+  PREV={cohorts:Object.entries(BASE.p1).map(([ym,p])=>({ym,p1:{pct:p.pct,n:p.n}}))};
+}
+// ── Notion用 Markdown ──
+function toMd(withImg){
+  const at=new Date(CUR.at),wk=Math.ceil(at.getDate()/7),pa=new Date(CUR.prevAt);const L=[];let ii=0;
+  const im=name=>{const x=IMGS[ii++];return withImg&&x?`![](images/${String(ii).padStart(2,'0')}.png)`:''};
+  const H=SHOTS&&SHOTS.html||{cohorts:{}};
+  const pushShot=(h,name)=>{if(h)L.push('',im(name),'')};
+  const pushPrev=(ym,k)=>{const h=_prevHtml(ym,k);if(h)pushShot(h,'')};
+  L.push(`# ${String(at.getFullYear()).slice(2)}年${at.getMonth()+1}月${wk}週目_週次会議`,'');
+  const q=CUR.quarter,qn=q.months.reduce((s,x)=>s+x.n,0),qm=q.months.reduce((s,x)=>s+x.mk,0),qp=q._prevMk!=null?q._prevMk:q.months.reduce((s,x)=>s+x.mkPrev,0),qt=Math.ceil(qn*q.target/100);
+  L.push('## 目標値','',`→クオーター達成率:${q.target}%（${qt}人）`,'',`対象生徒 ${qn}名`,'',`${md(at)}時点：${pc(qm,qn)}%(${qm}/${qn}名)`,'',`→${qm-qp>0?`${qm-qp}名増加！`:(qm-qp<0?`${qp-qm}名減少`:'増加なし')}`,'',`${md(pa)}時点：${pc(qp,q._prevN??qn)}%（${qp}名/${q._prevN??qn}名）`);
+  pushShot(H.quarter,'クオーターKGI');if(PSHOTS&&PSHOTS.html&&PSHOTS.html.quarter){L.push(`先週（${md(pa)}）`);pushShot(PSHOTS.html.quarter,'');}if(note('q'))L.push(note('q'),'');
+  let speedShown=false;
+  CUR.cohorts.forEach(c=>{
+    const m=mo(c.ym),S=H.cohorts[c.ym]||{},isP1=c.phase==='prep'||c.phase==='phase1';
+    L.push('',`## ${m}月卒業生`,'','### 目標としている内容','');
+    // 画面（build）と同じ順番・同じ部品で書き出す。画像は @@SHOT@@ の位置に入る
+    const _md=html=>{const _s=shot;shot=hh=>hh?'<p>@@SHOT@@</p>':'';let x;try{x=html();}finally{shot=_s;}h2md(x).forEach(l=>{if(l==='@@SHOT@@')L.push('',im(''),'');else L.push(l);});};
+    const _ap=()=>{const ap=approach(c).slice(0,3);L.push('### ② 包括的アプローチ（月全体への打ち手）','',...(ap.length?ap.map(x=>'- '+x.replace(/<\/?strong[^>]*>/g,'**').replace(/<[^>]+>/g,'')):['大きな打ち手は不要（順調）']),'');};
+    if(isP1){const p=p1Of(c),pp=PREV&&(PREV.cohorts||[]).find(x=>x.ym===c.ym);const p0=pp?p1Of(pp):null;const _d=p&&p0?p.n-p0.n:null;
+      L.push('### ① KPIの現状と予測','',`60日以内プログラム完了率（目標${c.targets.npp||50}%）：**${p?`${p.pct}%（${p.n}/${p.dn}人）`:'—'}**　先週：${p0?`${p0.pct}%（${p0.n}/${p0.dn}人）`:'記録なし'}${_d!=null?`　${_d>0?'+':''}${_d}人`:''}`,'');
+      pushShot(S.kgi,m+'月卒業生_KPI');pushPrev(c.ym,'kgi');
+      _ap();
+      L.push('### ③ 個別的アプローチ（生徒ごとの打ち手）','');_md(()=>stepTierPlan(c,m).replace(/<h3>[^<]*<\/h3>/,''));
+      L.push('','**その他データ（プログラム別・STEP別の生徒分類）**','');
+      progBreak(c).md.forEach(x=>{if(x==='@@SHOT@@')L.push(im(''));else L.push(x);});
+      _md(()=>stepTierHtml(c,m));}
+    else{const tg=c.targets;
+      [['mk','万垢率'],['r5','5000人以上率'],['r3','3000人以上率'],['r1','1000人以上率']].filter(([k])=>tg[k]!=null).forEach(([k,lb])=>L.push(`${lb}：**${tg[k]}%**`,''));
+      L.push('### ① KGI・KPIの現状と予測','',...h2md(progressTbl(c)));
+      pushShot(S.kgi,m+'月卒業生_万垢率');
+      if(S.landing){L.push('**着地見込み（予測）**');pushShot(S.landing,m+'月卒業生_着地見込み');}
+      _ap();
+      L.push('### ③ 個別的アプローチ（生徒ごとの打ち手）','');_md(()=>tierPlan(c,m).replace(/<h3>[^<]*<\/h3>/,''));
+      L.push('','**その他データ（原因分析・生徒分類・万垢につながる条件・分布・クロス分析）**','');
+      _md(()=>diagHtml(c,S,m)+tierHtml(c,m,true));
+      L.push(...ksfMd(c));
+      {const dh=distHtml(c,m);if(dh)pushShot(dh,'');}
+      crossMd(c).forEach(x=>{if(x==='@@SHOT@@')L.push('',im(''),'');else L.push(x);});
+      if(note('c_'+c.ym))L.push(note('c_'+c.ym),'');}
+  });
+  L.push('','## 報告','',note('report')||'');
+  return L.join('\n');
+}
+async function copyText(){if(!CUR)return;try{await navigator.clipboard.writeText(toMd(false));toast('文章をコピーしました。Notionに貼り付けてください')}catch(e){toast('コピーできませんでした')}}
+function _jszip(){return window.JSZip?Promise.resolve():new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+async function exportZip(){
+  if(!CUR)return;toast('書き出し中…（画像を作成しています）');
+  try{
+    await _jszip();const zip=new JSZip();const dir=zip.folder('images');
+    const fails=[];for(let i=0;i<IMGS.length;i++){const b=await toPng(i);if(b)dir.file(String(i+1).padStart(2,'0')+'.png',b);else fails.push(i+1);}
+    if(fails.length)console.warn('[Notion書き出し] 画像を作れなかった番号',fails);
+    const at=new Date(CUR.at),title=`${String(at.getFullYear()).slice(2)}年${at.getMonth()+1}月${Math.ceil(at.getDate()/7)}週目_週次会議`;
+    zip.file(title+'.md',toMd(true));
+    const blob=await zip.generateAsync({type:'blob'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=title+'.zip';a.click();
+    toast('ZIPを保存しました。Notionの「インポート」から取り込んでください');
+  }catch(e){toast('書き出しに失敗しました：'+e.message)}
+}
+(function(){const all=load(LS),ks=Object.keys(all).sort().reverse();const s=document.getElementById('date');
+  s.innerHTML=ks.length?ks.map(k=>{const d=new Date(k);return `<option value="${k}">${k.replace(/-/g,'/')}（${'日月火水木金土'[d.getDay()]}）</option>`}).join(''):'<option value="">記録なし</option>';go()})();
+</script>
+</body>
+</html>
